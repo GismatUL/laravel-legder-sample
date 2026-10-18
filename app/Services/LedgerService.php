@@ -23,6 +23,13 @@ use Illuminate\Support\Facades\DB;
  */
 class LedgerService
 {
+    /**
+     * Top-level financial transactions are retried when MySQL picks them as
+     * a deadlock victim. Everything inside rolled back, so a retry is safe.
+     * Laravel only retries the outermost transaction; nested calls rethrow.
+     */
+    public const DEADLOCK_ATTEMPTS = 3;
+
     public function __construct(
         private readonly JournalEntryRepositoryInterface $entries,
         private readonly AccountRepositoryInterface $accounts,
@@ -37,16 +44,22 @@ class LedgerService
     public function postManual(CarbonInterface $date, string $description, array $lines, ?string $idempotencyKey = null): JournalEntry
     {
         $accounts = $this->accounts->findManyKeyedById(array_map(fn (ManualEntryLineData $line) => $line->accountId, $lines));
+        $controlCodes = array_map(fn (string $key) => (string) config("ledger.accounts.{$key}"), (array) config('ledger.control_accounts'));
 
         return $this->post(new NewJournalEntry(
             date: $date,
             description: $description,
-            lines: array_map(fn (ManualEntryLineData $line) => new EntryLine(
-                $accounts->get($line->accountId) ?? throw LedgerException::unknownAccount($line->accountId),
-                debit: $line->debit->minor,
-                credit: $line->credit->minor,
-                memo: $line->memo,
-            ), $lines),
+            lines: array_map(function (ManualEntryLineData $line) use ($accounts, $controlCodes) {
+                $account = $accounts->get($line->accountId) ?? throw LedgerException::unknownAccount($line->accountId);
+
+                // Receivables are the sum of open invoices. A manual posting there
+                // would make the ledger and the invoices disagree.
+                if (in_array($account->code, $controlCodes, true)) {
+                    throw LedgerException::controlAccount($account->code);
+                }
+
+                return new EntryLine($account, debit: $line->debit->minor, credit: $line->credit->minor, memo: $line->memo);
+            }, $lines),
             idempotencyKey: $idempotencyKey === null ? null : "manual:{$idempotencyKey}",
         ));
     }
@@ -60,10 +73,12 @@ class LedgerService
         }
 
         try {
-            return DB::transaction(fn () => $this->write($entry));
+            return DB::transaction(fn () => $this->write($entry), attempts: self::DEADLOCK_ATTEMPTS);
         } catch (UniqueConstraintViolationException $e) {
-            // A concurrent request with the same key committed first.
-            $existing = $entry->idempotencyKey !== null ? $this->entries->findByIdempotencyKey($entry->idempotencyKey) : null;
+            // A concurrent request with the same key committed first. A locking
+            // read sees it even inside an outer REPEATABLE READ transaction,
+            // where a plain read would still return the older snapshot.
+            $existing = $entry->idempotencyKey !== null ? $this->entries->findByIdempotencyKey($entry->idempotencyKey, lock: true) : null;
 
             return $existing ? $this->assertSameEntry($existing, $entry) : throw $e;
         }
@@ -111,7 +126,7 @@ class LedgerService
             $this->validate($reversal);
 
             return $this->write($reversal, reversalOf: $original);
-        });
+        }, attempts: self::DEADLOCK_ATTEMPTS);
     }
 
     private function write(NewJournalEntry $entry, ?JournalEntry $reversalOf = null): JournalEntry
@@ -156,16 +171,22 @@ class LedgerService
     }
 
     /**
-     * A retried request must describe the same posting. Reusing a key for
-     * different amounts is a bug in the caller, so fail loudly.
+     * A retried request must describe the same posting: same date, description
+     * and lines. Lines are compared as a sorted list, so the order a client
+     * sends them in doesn't matter. Reusing a key for a different posting is
+     * a bug in the caller, so fail loudly.
      */
     private function assertSameEntry(JournalEntry $existing, NewJournalEntry $entry): JournalEntry
     {
-        $signature = fn (iterable $lines) => collect($lines)
-            ->map(fn ($line) => "{$line->account->code}:{$line->debit}:{$line->credit}")
+        $lines = fn (iterable $lines) => collect($lines)
+            ->map(fn ($line) => [(int) $line->account->getKey(), (int) $line->debit, (int) $line->credit, (string) $line->memo])
             ->sort()->values()->all();
 
-        if ($signature($existing->lines) !== $signature($entry->lines)) {
+        $same = $existing->entry_date->toDateString() === $entry->date->toDateString()
+            && $existing->description === $entry->description
+            && $lines($existing->lines) === $lines($entry->lines);
+
+        if (! $same) {
             throw LedgerException::idempotencyConflict((string) $entry->idempotencyKey);
         }
 

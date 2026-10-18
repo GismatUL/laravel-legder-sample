@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\UserRole;
 use Database\Factories\UserFactory;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
@@ -29,11 +30,14 @@ class User extends Authenticatable implements FilamentUser
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'role' => UserRole::class,
         ];
     }
 
     /**
-     * Sample app: every user is an admin. A real system would check roles here.
+     * Every role may open the panel; what it can do there is decided by the
+     * policies in app/Policies. The role is not mass assignable, so a request
+     * can't promote its own user.
      */
     public function canAccessPanel(Panel $panel): bool
     {

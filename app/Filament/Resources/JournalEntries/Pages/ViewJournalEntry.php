@@ -28,6 +28,7 @@ class ViewJournalEntry extends ViewRecord
             Action::make('reverse')
                 ->icon('heroicon-o-arrow-uturn-left')
                 ->color('danger')
+                ->authorize('reverse')
                 // Hidden where LedgerService::reverseManual() would refuse anyway.
                 ->visible(fn (JournalEntry $record) => $record->source_type === null
                     && $record->reversal_of_id === null

@@ -2,9 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Data\InvoiceData;
+use App\Data\InvoiceLineData;
 use App\Enums\InvoiceStatus;
+use App\Enums\PaymentMethod;
 use App\Exceptions\BillingException;
 use App\Exceptions\LedgerException;
+use App\Exceptions\MoneyException;
+use App\Models\Customer;
 use App\Models\Invoice;
 use App\Services\InvoiceService;
 use App\Services\PaymentService;
@@ -107,10 +112,91 @@ class InvoiceServiceTest extends LedgerTestCase
     public function test_an_invoice_with_payments_cannot_be_voided(): void
     {
         $invoice = $this->invoices->issue(Invoice::factory()->withLines([[1, 10000]])->create());
-        app(PaymentService::class)->record($invoice, Money::parse('10.00'), today(), 'cash', 'p-1');
+        app(PaymentService::class)->record($invoice, Money::parse('10.00'), today(), PaymentMethod::Cash, 'p-1');
 
         $this->expectException(BillingException::class);
 
         $this->invoices->void($invoice);
+    }
+
+    public function test_a_void_invoice_cannot_be_issued_voided_or_edited_again(): void
+    {
+        $invoice = $this->invoices->void($this->invoices->issue(Invoice::factory()->withLines([[1, 1000]])->create()));
+
+        $this->assertThrows(fn () => $this->invoices->issue($invoice), BillingException::class);
+        $this->assertThrows(fn () => $this->invoices->void($invoice), BillingException::class);
+        $this->assertThrows(fn () => $this->invoices->deleteDraft($invoice), BillingException::class);
+        $this->assertSame(1, $invoice->journalEntry()->count());
+        $this->assertDatabaseCount('journal_entries', 2); // posting + reversal, nothing more
+    }
+
+    public function test_a_paid_invoice_cannot_be_voided(): void
+    {
+        $invoice = $this->invoices->issue(Invoice::factory()->withLines([[1, 1000]])->create());
+        app(PaymentService::class)->record($invoice, Money::parse('10.00'), today(), PaymentMethod::Cash, 'p-1');
+
+        $this->expectExceptionObject(BillingException::hasPayments());
+
+        $this->invoices->void($invoice->refresh());
+    }
+
+    public function test_a_due_date_in_the_past_blocks_issuing(): void
+    {
+        $draft = Invoice::factory()->withLines([[1, 1000]])->create(['due_date' => today()->subDay()]);
+
+        try {
+            $this->invoices->issue($draft);
+            $this->fail('Issued with a due date before the issue date.');
+        } catch (BillingException $e) {
+            $this->assertSame('billing.due_before_issue', $e->errorCode);
+        }
+
+        $this->assertSame(InvoiceStatus::Draft, $draft->refresh()->status);
+        $this->assertNull($draft->number);
+        $this->assertDatabaseCount('journal_entries', 0);
+    }
+
+    public function test_a_line_total_that_overflows_is_a_domain_error_and_saves_nothing(): void
+    {
+        // Regression: quantity 1,000,000 x 9,999,999,999,999.99 passed validation
+        // and overflowed to float inside Money::multiply() (TypeError).
+        try {
+            $this->invoices->createDraft(new InvoiceData(
+                customerId: Customer::factory()->create()->id,
+                dueDate: null,
+                notes: null,
+                lines: [new InvoiceLineData('Huge', 1000000, Money::parse('9999999999999.99'), 1800)],
+            ));
+            $this->fail('Overflow was not detected.');
+        } catch (MoneyException $e) {
+            $this->assertSame('money.overflow', $e->errorCode);
+        }
+
+        $this->assertDatabaseCount('invoices', 0);
+        $this->assertDatabaseCount('invoice_lines', 0);
+    }
+
+    public function test_receivables_in_the_ledger_equal_the_open_invoices(): void
+    {
+        // A mix of every state: draft, issued, partially paid, paid, void.
+        Invoice::factory()->withLines([[1, 5000, 1800]])->create();
+        $issued = $this->invoices->issue(Invoice::factory()->withLines([[2, 3333, 1800]])->create());
+        $partial = $this->invoices->issue(Invoice::factory()->withLines([[1, 10000, 1800]])->create());
+        $paid = $this->invoices->issue(Invoice::factory()->withLines([[1, 2500, 0]])->create());
+        $this->invoices->void($this->invoices->issue(Invoice::factory()->withLines([[1, 7000, 1800]])->create()));
+
+        $payments = app(PaymentService::class);
+        $payments->record($partial, Money::parse('40.00'), today(), PaymentMethod::Card, 'p-1');
+        $payments->record($paid, Money::parse('25.00'), today(), PaymentMethod::Card, 'p-2');
+
+        $open = Invoice::query()->get()
+            ->filter(fn (Invoice $invoice) => $invoice->status->acceptsPayments())
+            ->reduce(fn (Money $sum, Invoice $invoice) => $sum->add($invoice->outstanding()), Money::zero());
+
+        $this->assertTrue($open->equals($this->balance('receivable')), "Open invoices {$open} vs ledger {$this->balance('receivable')}");
+        $this->assertSame(
+            $issued->total->minor + $partial->total->minor - 4000,
+            $this->balance('receivable')->minor,
+        );
     }
 }

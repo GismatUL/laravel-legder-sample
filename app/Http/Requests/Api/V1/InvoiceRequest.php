@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1;
 
 use App\Data\InvoiceData;
+use App\Rules\MoneyAmount;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
@@ -23,8 +24,7 @@ class InvoiceRequest extends FormRequest
             'lines' => ['required', 'array', 'min:1', 'max:100'],
             'lines.*.description' => ['required', 'string', 'max:255'],
             'lines.*.quantity' => ['required', 'integer', 'min:1', 'max:1000000'],
-            // Decimal string, e.g. "12.50". Strings avoid float rounding in JSON clients.
-            'lines.*.unit_price' => ['required', 'string', 'regex:/^\d{1,13}(\.\d{1,2})?$/'],
+            'lines.*.unit_price' => ['required', new MoneyAmount],
             'lines.*.tax_rate_bp' => ['required', 'integer', 'in:0,1800'],
         ];
     }
@@ -35,7 +35,6 @@ class InvoiceRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'lines.*.unit_price.regex' => 'The unit price must be a decimal string with up to 2 decimals, e.g. "12.50".',
             'lines.*.tax_rate_bp.in' => 'The VAT rate must be 0 or 1800 basis points (0% or 18%).',
         ];
     }

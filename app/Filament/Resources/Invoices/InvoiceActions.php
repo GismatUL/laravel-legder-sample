@@ -3,8 +3,10 @@
 namespace App\Filament\Resources\Invoices;
 
 use App\Enums\InvoiceStatus;
+use App\Enums\PaymentMethod;
 use App\Exceptions\DomainRuleException;
 use App\Models\Invoice;
+use App\Rules\MoneyAmount;
 use App\Services\InvoiceService;
 use App\Services\PaymentService;
 use App\Support\Money;
@@ -22,6 +24,8 @@ use Illuminate\Support\Str;
 /**
  * Invoice workflow actions. The UI only collects input; every state change
  * goes through InvoiceService / PaymentService, the same code the tests cover.
+ * authorize() uses InvoicePolicy: an unauthorized action is hidden and
+ * refused if called directly through Livewire.
  */
 class InvoiceActions
 {
@@ -29,6 +33,7 @@ class InvoiceActions
     {
         return Action::make('issue')
             ->icon('heroicon-o-paper-airplane')
+            ->authorize('issue')
             ->visible(fn (Invoice $record) => $record->status === InvoiceStatus::Draft)
             ->requiresConfirmation()
             ->modalDescription('Issuing assigns an invoice number and posts the invoice to the ledger. It can no longer be edited after this.')
@@ -41,19 +46,22 @@ class InvoiceActions
             ->label('Record payment')
             ->icon('heroicon-o-banknotes')
             ->color('success')
+            ->authorize('recordPayment')
             ->visible(fn (Invoice $record) => $record->status->acceptsPayments())
             ->schema(fn (Invoice $record) => [
                 TextInput::make('amount')
                     ->required()
-                    ->regex('/^\d+(\.\d{1,2})?$/')
+                    ->rule(new MoneyAmount)
                     ->default($record->outstanding()->toDecimal())
                     ->helperText("Outstanding: {$record->outstanding()}"),
                 DatePicker::make('paid_on')
                     ->required()
+                    ->minDate($record->issue_date)
+                    ->maxDate(today())
                     ->default(today()),
                 Select::make('method')
-                    ->options(['bank_transfer' => 'Bank transfer', 'card' => 'Card', 'cash' => 'Cash'])
-                    ->default('bank_transfer')
+                    ->options(PaymentMethod::class)
+                    ->default(PaymentMethod::BankTransfer->value)
                     ->required(),
                 TextInput::make('reference')
                     ->maxLength(100),
@@ -65,7 +73,7 @@ class InvoiceActions
                 $record,
                 Money::parse($data['amount']),
                 Carbon::parse($data['paid_on']),
-                $data['method'],
+                $data['method'] instanceof PaymentMethod ? $data['method'] : PaymentMethod::from($data['method']),
                 $data['idempotency_key'],
                 $data['reference'] ?? null,
             ), 'Payment recorded'));
@@ -76,6 +84,7 @@ class InvoiceActions
         return Action::make('void')
             ->icon('heroicon-o-x-circle')
             ->color('danger')
+            ->authorize('void')
             ->visible(fn (Invoice $record) => $record->status === InvoiceStatus::Issued && $record->amount_paid->isZero())
             ->requiresConfirmation()
             ->modalDescription('A reversing journal entry will cancel the original posting. The invoice number stays used.')

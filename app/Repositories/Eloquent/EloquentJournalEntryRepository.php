@@ -5,6 +5,7 @@ namespace App\Repositories\Eloquent;
 use App\Data\AccountTotals;
 use App\Data\EntryLine;
 use App\Enums\AccountType;
+use App\Exceptions\MoneyException;
 use App\Models\JournalEntry;
 use App\Repositories\Contracts\JournalEntryRepositoryInterface;
 use Carbon\CarbonInterface;
@@ -15,9 +16,13 @@ use Illuminate\Support\Facades\DB;
 
 class EloquentJournalEntryRepository implements JournalEntryRepositoryInterface
 {
-    public function findByIdempotencyKey(string $key): ?JournalEntry
+    public function findByIdempotencyKey(string $key, bool $lock = false): ?JournalEntry
     {
-        return JournalEntry::query()->with('lines.account')->where('idempotency_key', $key)->first();
+        return JournalEntry::query()
+            ->with('lines.account')
+            ->where('idempotency_key', $key)
+            ->when($lock, fn ($query) => $query->lockForUpdate())
+            ->first();
     }
 
     public function findForUpdate(int $id): JournalEntry
@@ -44,8 +49,8 @@ class EloquentJournalEntryRepository implements JournalEntryRepositoryInterface
     {
         return JournalEntry::query()
             ->with('lines.account')
-            ->when($from, fn ($query) => $query->whereDate('entry_date', '>=', $from))
-            ->when($to, fn ($query) => $query->whereDate('entry_date', '<=', $to))
+            ->when($from, fn ($query) => $query->where('entry_date', '>=', $from->toDateString()))
+            ->when($to, fn ($query) => $query->where('entry_date', '<', $to->copy()->addDay()->toDateString()))
             ->when($accountId, fn ($query) => $query->whereHas('lines', fn ($q) => $q->where('account_id', $accountId)))
             ->latest('id')
             ->paginate($perPage);
@@ -76,7 +81,8 @@ class EloquentJournalEntryRepository implements JournalEntryRepositoryInterface
         return DB::table('accounts')
             ->join('journal_lines', 'journal_lines.account_id', '=', 'accounts.id')
             ->join('journal_entries', 'journal_entries.id', '=', 'journal_lines.journal_entry_id')
-            ->when($asOf, fn ($query) => $query->whereDate('journal_entries.entry_date', '<=', $asOf))
+            // "< next day" instead of whereDate(): DATE(col) can't use the entry_date index.
+            ->when($asOf, fn ($query) => $query->where('journal_entries.entry_date', '<', $asOf->copy()->addDay()->toDateString()))
             ->groupBy('accounts.id', 'accounts.code', 'accounts.name', 'accounts.type')
             ->orderBy('accounts.code')
             ->selectRaw('accounts.code, accounts.name, accounts.type, SUM(journal_lines.debit) AS debits, SUM(journal_lines.credit) AS credits')
@@ -85,8 +91,19 @@ class EloquentJournalEntryRepository implements JournalEntryRepositoryInterface
                 code: (string) $row->code,
                 name: (string) $row->name,
                 type: AccountType::from((string) $row->type),
-                debits: (int) $row->debits,
-                credits: (int) $row->credits,
+                debits: $this->toInt($row->debits),
+                credits: $this->toInt($row->credits),
             ));
+    }
+
+    /**
+     * MySQL returns SUM() as a DECIMAL string; (int) would silently saturate
+     * a total beyond PHP_INT_MAX instead of failing.
+     */
+    private function toInt(mixed $sum): int
+    {
+        $value = filter_var($sum, FILTER_VALIDATE_INT);
+
+        return $value === false ? throw MoneyException::overflow() : $value;
     }
 }

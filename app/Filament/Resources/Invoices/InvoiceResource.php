@@ -45,15 +45,18 @@ class InvoiceResource extends Resource
         return InvoicesTable::configure($table);
     }
 
-    /** Only drafts can be changed. Issued invoices are corrected by voiding. */
+    /**
+     * The policy decides who may edit; on top of that only drafts can be
+     * changed. Issued invoices are corrected by voiding.
+     */
     public static function canEdit(Model $record): bool
     {
-        return $record instanceof Invoice && $record->isEditable();
+        return parent::canEdit($record) && $record instanceof Invoice && $record->isEditable();
     }
 
     public static function canDelete(Model $record): bool
     {
-        return $record instanceof Invoice && $record->isEditable();
+        return parent::canDelete($record) && $record instanceof Invoice && $record->isEditable();
     }
 
     public static function getPages(): array

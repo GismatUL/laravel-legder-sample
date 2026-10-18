@@ -6,6 +6,7 @@ use App\Models\BankTransaction;
 use App\Models\Payment;
 use App\Repositories\Contracts\BankTransactionRepositoryInterface;
 use App\Repositories\Contracts\PaymentRepositoryInterface;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -32,7 +33,18 @@ class BankReconciler
             return false;
         }
 
-        return DB::transaction(function () use ($transaction, $match) {
+        try {
+            return $this->match($transaction, strtoupper($match[0]));
+        } catch (UniqueConstraintViolationException) {
+            // bank_transactions.payment_id is unique: a concurrent run matched
+            // this payment to another statement line first. Leave this one open.
+            return false;
+        }
+    }
+
+    private function match(BankTransaction $transaction, string $invoiceNumber): bool
+    {
+        return DB::transaction(function () use ($transaction, $invoiceNumber) {
             $transaction = $this->transactions->findForUpdate($transaction->getKey());
 
             if ($transaction->reconciled_at !== null) {
@@ -41,7 +53,7 @@ class BankReconciler
 
             // If several payments on the invoice have the same amount, take
             // the one recorded closest to the bank booking date.
-            $payment = $this->payments->unmatchedForUpdate(strtoupper($match[0]), $transaction->amount)
+            $payment = $this->payments->unmatchedForUpdate($invoiceNumber, $transaction->amount)
                 ->sortBy(fn (Payment $p) => abs($p->paid_on->diffInDays($transaction->booked_on)))
                 ->first();
 

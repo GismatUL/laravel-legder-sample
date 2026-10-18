@@ -38,7 +38,7 @@ class InvoicePaymentController extends Controller
             $invoice,
             $request->amount(),
             $request->paidOn(),
-            $request->string('method')->toString(),
+            $request->paymentMethod(),
             $request->idempotencyKey(),
             $request->input('reference'),
         );

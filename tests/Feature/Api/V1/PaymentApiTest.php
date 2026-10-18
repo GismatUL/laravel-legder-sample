@@ -66,6 +66,39 @@ class PaymentApiTest extends ApiTestCase
             ->assertJsonPath('code', 'billing.idempotency_conflict');
     }
 
+    public function test_the_same_key_with_a_different_date_or_method_is_a_conflict(): void
+    {
+        $this->travelTo(today()->addDay());
+        $this->pay('psp-tx-1')->assertCreated();
+
+        $this->pay('psp-tx-1', ['paid_on' => today()->subDay()->toDateString()])
+            ->assertConflict()
+            ->assertJsonPath('code', 'billing.idempotency_conflict');
+
+        $this->pay('psp-tx-1', ['method' => 'card'])
+            ->assertConflict()
+            ->assertJsonPath('code', 'billing.idempotency_conflict');
+
+        $this->assertDatabaseCount('payments', 1);
+    }
+
+    public function test_rejects_unknown_methods_and_amounts_that_are_not_decimal_strings(): void
+    {
+        $this->pay('psp-tx-1', ['method' => 'crypto', 'amount' => 50.5])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['method', 'amount']);
+
+        $this->pay('psp-tx-2', ['amount' => '-5.00'])->assertJsonValidationErrors(['amount']);
+        $this->pay('psp-tx-3', ['amount' => '12345678901234.00'])->assertJsonValidationErrors(['amount']);
+    }
+
+    public function test_a_payment_dated_before_the_issue_date_is_a_business_rule_error(): void
+    {
+        $this->pay('psp-tx-1', ['paid_on' => today()->subDay()->toDateString()])
+            ->assertUnprocessable()
+            ->assertJsonPath('code', 'billing.payment_before_issue');
+    }
+
     public function test_the_idempotency_key_header_is_required(): void
     {
         $this->postJson("/api/v1/invoices/{$this->invoice->id}/payments", [

@@ -12,7 +12,11 @@ use Illuminate\Support\Collection;
 
 interface JournalEntryRepositoryInterface
 {
-    public function findByIdempotencyKey(string $key): ?JournalEntry;
+    /**
+     * With $lock, a locking read (FOR UPDATE) that sees rows committed after
+     * the current transaction's snapshot was taken.
+     */
+    public function findByIdempotencyKey(string $key, bool $lock = false): ?JournalEntry;
 
     public function findForUpdate(int $id): JournalEntry;
 

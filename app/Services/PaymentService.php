@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Data\EntryLine;
 use App\Data\NewJournalEntry;
 use App\Enums\InvoiceStatus;
+use App\Enums\PaymentMethod;
 use App\Exceptions\BillingException;
 use App\Models\Invoice;
 use App\Models\Payment;
@@ -35,7 +36,7 @@ class PaymentService
         Invoice $invoice,
         Money $amount,
         CarbonInterface $paidOn,
-        string $method,
+        PaymentMethod $method,
         string $idempotencyKey,
         ?string $reference = null,
     ): Payment {
@@ -45,23 +46,37 @@ class PaymentService
 
         return DB::transaction(function () use ($invoice, $amount, $paidOn, $method, $idempotencyKey, $reference) {
             // Lock first, then check the key: a duplicate request waits here
-            // until the first one commits, and then finds its payment.
+            // until the first one commits, and then finds its payment. The
+            // unique index on payments.idempotency_key backs this up for a
+            // key reused on a different invoice (a different row lock).
             $invoice = $this->invoices->findForUpdate($invoice->getKey());
 
             if ($existing = $this->payments->findByIdempotencyKey($idempotencyKey)) {
-                if ((int) $existing->invoice_id !== (int) $invoice->getKey() || ! $existing->amount->equals($amount)) {
-                    throw BillingException::idempotencyConflict($idempotencyKey);
-                }
-
-                return $existing;
+                return $this->assertSamePayment($existing, $invoice, $amount, $paidOn, $method, $reference);
             }
 
             if (! $invoice->status->acceptsPayments()) {
                 throw BillingException::invalidTransition($invoice->status, 'record a payment on');
             }
 
+            if ($invoice->issue_date !== null && $paidOn->lt($invoice->issue_date)) {
+                throw BillingException::paymentBeforeIssue($invoice->issue_date);
+            }
+
+            // A payment is recorded when the money has arrived, not in advance.
+            if ($paidOn->gt(today())) {
+                throw BillingException::paymentInFuture();
+            }
+
             if ($amount->greaterThan($invoice->outstanding())) {
                 throw BillingException::overpayment($amount, $invoice->outstanding());
+            }
+
+            $paid = $invoice->amount_paid->add($amount);
+            $status = $paid->equals($invoice->total) ? InvoiceStatus::Paid : InvoiceStatus::PartiallyPaid;
+
+            if (! $invoice->status->canTransitionTo($status)) {
+                throw BillingException::invalidTransition($invoice->status, 'record a payment on');
             }
 
             $entry = $this->ledger->post(new NewJournalEntry(
@@ -84,14 +99,38 @@ class PaymentService
                 'journal_entry_id' => $entry->getKey(),
             ]);
 
-            $paid = $invoice->amount_paid->add($amount);
-
             $this->invoices->update($invoice, [
                 'amount_paid' => $paid,
-                'status' => $paid->equals($invoice->total) ? InvoiceStatus::Paid : InvoiceStatus::PartiallyPaid,
+                'status' => $status,
             ]);
 
             return $payment;
-        });
+        }, attempts: LedgerService::DEADLOCK_ATTEMPTS);
+    }
+
+    /**
+     * A retry must describe the same payment. Every field that defines it is
+     * compared, so a key reused for another date or method is a 409, not a
+     * silent replay of an unrelated payment.
+     */
+    private function assertSamePayment(
+        Payment $existing,
+        Invoice $invoice,
+        Money $amount,
+        CarbonInterface $paidOn,
+        PaymentMethod $method,
+        ?string $reference,
+    ): Payment {
+        $same = (int) $existing->invoice_id === (int) $invoice->getKey()
+            && $existing->amount->equals($amount)
+            && $existing->paid_on->toDateString() === $paidOn->toDateString()
+            && $existing->method === $method
+            && $existing->reference === $reference;
+
+        if (! $same) {
+            throw BillingException::idempotencyConflict($existing->idempotency_key);
+        }
+
+        return $existing;
     }
 }

@@ -57,6 +57,18 @@ class InvoiceApiTest extends ApiTestCase
             ->assertJsonValidationErrors(['lines.0.unit_price', 'lines.0.tax_rate_bp']);
     }
 
+    public function test_a_line_total_that_overflows_is_a_422_not_a_500(): void
+    {
+        // Each field is within its limit; the product isn't representable.
+        $this->postJson('/api/v1/invoices', $this->payload([
+            'lines' => [['description' => 'X', 'quantity' => 1000000, 'unit_price' => '9999999999999.99', 'tax_rate_bp' => 0]],
+        ]))
+            ->assertUnprocessable()
+            ->assertJsonPath('code', 'money.overflow');
+
+        $this->assertDatabaseCount('invoices', 0);
+    }
+
     public function test_full_lifecycle_issue_then_void(): void
     {
         $id = $this->postJson('/api/v1/invoices', $this->payload())->json('data.id');

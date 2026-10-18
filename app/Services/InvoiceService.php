@@ -118,7 +118,7 @@ class InvoiceService
             // Row lock: concurrent issue/void/payment requests on the same invoice run one after another.
             $invoice = $this->invoices->findForUpdate($invoice->getKey());
 
-            if ($invoice->status !== InvoiceStatus::Draft) {
+            if (! $invoice->status->canTransitionTo(InvoiceStatus::Issued)) {
                 throw BillingException::invalidTransition($invoice->status, 'issue');
             }
 
@@ -126,6 +126,12 @@ class InvoiceService
 
             if ($invoice->total->isZero()) {
                 throw BillingException::emptyInvoice();
+            }
+
+            $dueDate = $invoice->due_date ?? today()->addDays((int) config('ledger.payment_terms_days'));
+
+            if ($dueDate->lt(today())) {
+                throw BillingException::dueBeforeIssue($dueDate);
             }
 
             $number = config('ledger.invoice_prefix').str_pad((string) $this->sequences->next('invoice'), 6, '0', STR_PAD_LEFT);
@@ -151,10 +157,10 @@ class InvoiceService
                 'number' => $number,
                 'status' => InvoiceStatus::Issued,
                 'issue_date' => today(),
-                'due_date' => $invoice->due_date ?? today()->addDays((int) config('ledger.payment_terms_days')),
+                'due_date' => $dueDate,
                 'journal_entry_id' => $entry->getKey(),
             ]);
-        });
+        }, attempts: LedgerService::DEADLOCK_ATTEMPTS);
     }
 
     /**
@@ -170,7 +176,7 @@ class InvoiceService
                 throw BillingException::hasPayments();
             }
 
-            if ($invoice->status !== InvoiceStatus::Issued || $invoice->journalEntry === null) {
+            if (! $invoice->status->canTransitionTo(InvoiceStatus::Void) || $invoice->journalEntry === null) {
                 throw BillingException::invalidTransition($invoice->status, 'void');
             }
 
@@ -180,6 +186,6 @@ class InvoiceService
                 'status' => InvoiceStatus::Void,
                 'void_entry_id' => $reversal->getKey(),
             ]);
-        });
+        }, attempts: LedgerService::DEADLOCK_ATTEMPTS);
     }
 }
