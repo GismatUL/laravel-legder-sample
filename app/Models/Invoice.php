@@ -24,6 +24,10 @@ class Invoice extends Model
 
     protected $attributes = [
         'status' => 'draft',
+        'subtotal' => 0,
+        'tax_total' => 0,
+        'total' => 0,
+        'amount_paid' => 0,
     ];
 
     protected function casts(): array

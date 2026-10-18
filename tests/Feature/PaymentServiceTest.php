@@ -37,8 +37,8 @@ class PaymentServiceTest extends LedgerTestCase
         $this->assertSame(InvoiceStatus::Paid, $this->invoice->refresh()->status);
         $this->assertTrue($this->invoice->outstanding()->isZero());
 
-        $this->assertTrue($this->account('bank')->balance()->equals(Money::parse('118.00')));
-        $this->assertTrue($this->account('receivable')->balance()->isZero());
+        $this->assertTrue($this->balance('bank')->equals(Money::parse('118.00')));
+        $this->assertTrue($this->balance('receivable')->isZero());
     }
 
     public function test_overpayment_is_rejected(): void
@@ -64,7 +64,7 @@ class PaymentServiceTest extends LedgerTestCase
 
         $this->assertTrue($first->is($retry));
         $this->assertDatabaseCount('payments', 1);
-        $this->assertTrue($this->account('bank')->balance()->equals(Money::parse('118.00')));
+        $this->assertTrue($this->balance('bank')->equals(Money::parse('118.00')));
     }
 
     public function test_reusing_a_key_for_a_different_amount_fails(): void
@@ -94,6 +94,6 @@ class PaymentServiceTest extends LedgerTestCase
 
         $this->assertDatabaseCount('payments', 0);
         $this->assertDatabaseCount('journal_entries', 1); // only the invoice posting
-        $this->assertTrue($this->account('bank')->balance()->isZero());
+        $this->assertTrue($this->balance('bank')->isZero());
     }
 }

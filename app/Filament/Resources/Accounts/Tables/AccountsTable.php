@@ -27,9 +27,7 @@ class AccountsTable
                 TextColumn::make('type')
                     ->badge(),
                 TextColumn::make('balance')
-                    ->state(fn (Account $record) => $record
-                        ->normalBalance((int) $record->lines_sum_debit, (int) $record->lines_sum_credit)
-                        ->format())
+                    ->state(fn (Account $record) => $record->loadedBalance()->format())
                     ->alignEnd(),
                 IconColumn::make('is_active')
                     ->label('Active')

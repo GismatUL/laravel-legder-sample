@@ -3,6 +3,7 @@
 namespace App\Filament\Pages;
 
 use App\Reports\TrialBalance as TrialBalanceReport;
+use App\Services\ReportService;
 use BackedEnum;
 use Filament\Forms\Components\DatePicker;
 use Filament\Pages\Page;
@@ -39,6 +40,6 @@ class TrialBalance extends Page
 
     public function getReport(): TrialBalanceReport
     {
-        return new TrialBalanceReport($this->asOf ? Carbon::parse($this->asOf) : null);
+        return app(ReportService::class)->trialBalance($this->asOf ? Carbon::parse($this->asOf) : null);
     }
 }

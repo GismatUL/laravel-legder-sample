@@ -38,6 +38,9 @@ jobs:
       - name: Code style
         run: vendor/bin/pint --test
 
+      - name: Static analysis (Larastan level 7)
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+
       # Run the suite on MySQL too: row locks (lockForUpdate) are a no-op on SQLite.
       - name: Tests (SQLite)
         run: php artisan test

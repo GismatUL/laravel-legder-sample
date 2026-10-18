@@ -7,8 +7,8 @@ use App\Data\NewJournalEntry;
 use App\Exceptions\LedgerException;
 use App\Models\JournalEntry;
 use App\Models\JournalLine;
-use App\Reports\TrialBalance;
 use App\Services\LedgerService;
+use App\Services\ReportService;
 use App\Support\Money;
 
 class LedgerServiceTest extends LedgerTestCase
@@ -36,8 +36,8 @@ class LedgerServiceTest extends LedgerTestCase
 
         $this->assertCount(2, $entry->lines);
         $this->assertTrue($entry->totalDebits()->equals(Money::parse('150.00')));
-        $this->assertTrue($this->account('bank')->balance()->equals(Money::parse('150.00')));
-        $this->assertTrue($this->account('sales')->balance()->equals(Money::parse('150.00')));
+        $this->assertTrue($this->balance('bank')->equals(Money::parse('150.00')));
+        $this->assertTrue($this->balance('sales')->equals(Money::parse('150.00')));
     }
 
     public function test_rejects_an_unbalanced_entry_and_writes_nothing(): void
@@ -118,8 +118,8 @@ class LedgerServiceTest extends LedgerTestCase
         $reversal = $this->ledger->reverse($entry, today());
 
         $this->assertTrue($reversal->reversalOf->is($entry));
-        $this->assertTrue($this->account('bank')->balance()->isZero());
-        $this->assertTrue($this->account('sales')->balance()->isZero());
+        $this->assertTrue($this->balance('bank')->isZero());
+        $this->assertTrue($this->balance('sales')->isZero());
         $this->assertSame(2, JournalEntry::count());
     }
 
@@ -141,8 +141,8 @@ class LedgerServiceTest extends LedgerTestCase
         ]));
         $this->ledger->post($this->cashSale('40.00'));
 
-        $now = new TrialBalance;
-        $lastWeek = new TrialBalance(today()->subWeek());
+        $now = app(ReportService::class)->trialBalance();
+        $lastWeek = app(ReportService::class)->trialBalance(today()->subWeek());
 
         $this->assertTrue($now->isBalanced());
         $this->assertTrue($now->totalDebit->equals(Money::parse('140.00')));

@@ -9,6 +9,7 @@ use Filament\Actions\Action;
 use Filament\Forms\Components\FileUpload;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
+use Filament\Support\Exceptions\Halt;
 use Illuminate\Support\Facades\Storage;
 use InvalidArgumentException;
 
@@ -30,22 +31,23 @@ class ListBankTransactions extends ListRecords
                         ->directory('statements')
                         ->required(),
                 ])
-                ->action(function (array $data, Action $action) {
+                ->action(function (array $data) {
                     $path = Storage::disk('local')->path($data['statement']);
 
                     try {
                         $count = app(BankStatementImporter::class)->import($path);
+
+                        Notification::make()->success()
+                            ->title($count > 0 ? "Imported {$count} transactions" : 'Nothing new in this statement')
+                            ->body($count > 0 ? 'Automatic matching is running in the background.' : null)
+                            ->send();
                     } catch (InvalidArgumentException $e) {
                         Notification::make()->danger()->title($e->getMessage())->send();
-                        $action->halt();
+
+                        throw new Halt;
                     } finally {
                         Storage::disk('local')->delete($data['statement']);
                     }
-
-                    Notification::make()->success()
-                        ->title($count > 0 ? "Imported {$count} transactions" : 'Nothing new in this statement')
-                        ->body($count > 0 ? 'Automatic matching is running in the background.' : null)
-                        ->send();
                 }),
             Action::make('reconcile')
                 ->label('Run matching')

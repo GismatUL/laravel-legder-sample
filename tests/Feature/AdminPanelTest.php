@@ -7,12 +7,12 @@ use App\Filament\Pages\TrialBalance;
 use App\Filament\Resources\Accounts\Pages\ListAccounts;
 use App\Filament\Resources\BankTransactions\Pages\ListBankTransactions;
 use App\Filament\Resources\Invoices\Pages\CreateInvoice;
+use App\Filament\Resources\Invoices\Pages\EditInvoice;
 use App\Filament\Resources\Invoices\Pages\ListInvoices;
 use App\Filament\Resources\Invoices\Pages\ViewInvoice;
 use App\Filament\Resources\JournalEntries\Pages\CreateJournalEntry;
 use App\Filament\Resources\JournalEntries\Pages\ListJournalEntries;
 use App\Filament\Resources\JournalEntries\Pages\ViewJournalEntry;
-use App\Models\Account;
 use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\JournalEntry;
@@ -63,6 +63,26 @@ class AdminPanelTest extends LedgerTestCase
         $this->assertSame(9036, $invoice->tax_total->minor);
     }
 
+    public function test_edits_a_draft_and_shows_existing_prices_as_decimals(): void
+    {
+        $invoice = Invoice::factory()->withLines([[2, 1250, 0]])->create();
+
+        Livewire::test(EditInvoice::class, ['record' => $invoice->getRouteKey()])
+            ->assertSchemaStateSet(fn (array $state) => $this->assertSame('12.50', array_values($state['lines'])[0]['unit_price']))
+            ->fillForm([
+                'customer_id' => $invoice->customer_id,
+                'lines' => [
+                    ['description' => 'Replaced line', 'quantity' => 3, 'unit_price' => '10.00', 'tax_rate_bp' => 0],
+                ],
+            ])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $invoice->refresh();
+        $this->assertSame(['Replaced line'], $invoice->lines()->pluck('description')->all());
+        $this->assertSame(3000, $invoice->total->minor);
+    }
+
     public function test_issue_and_payment_actions_go_through_the_services(): void
     {
         $invoice = Invoice::factory()->withLines([[1, 10000, 1800]])->create();
@@ -92,7 +112,7 @@ class AdminPanelTest extends LedgerTestCase
     public function test_manual_entry_must_balance(): void
     {
         $bank = $this->account('bank')->id;
-        $expense = Account::byCode('6000')->id;
+        $expense = $this->accountByCode('6000')->id;
 
         Livewire::test(CreateJournalEntry::class)
             ->fillForm([
@@ -112,7 +132,7 @@ class AdminPanelTest extends LedgerTestCase
     public function test_manual_entry_can_be_posted_and_reversed(): void
     {
         $bank = $this->account('bank')->id;
-        $expense = Account::byCode('6000')->id;
+        $expense = $this->accountByCode('6000')->id;
 
         Livewire::test(CreateJournalEntry::class)
             ->fillForm([
@@ -132,6 +152,6 @@ class AdminPanelTest extends LedgerTestCase
             ->callAction('reverse');
 
         $this->assertTrue($entry->reversedBy()->exists());
-        $this->assertTrue($this->account('bank')->balance()->isZero());
+        $this->assertTrue($this->balance('bank')->isZero());
     }
 }

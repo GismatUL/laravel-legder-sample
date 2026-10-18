@@ -43,9 +43,9 @@ class InvoiceServiceTest extends LedgerTestCase
         $this->assertSame('INV-000001', $invoice->number);
         $this->assertNotNull($invoice->due_date);
 
-        $this->assertTrue($this->account('receivable')->balance()->equals(Money::parse('1180.00')));
-        $this->assertTrue($this->account('sales')->balance()->equals(Money::parse('1000.00')));
-        $this->assertTrue($this->account('vat_payable')->balance()->equals(Money::parse('180.00')));
+        $this->assertTrue($this->balance('receivable')->equals(Money::parse('1180.00')));
+        $this->assertTrue($this->balance('sales')->equals(Money::parse('1000.00')));
+        $this->assertTrue($this->balance('vat_payable')->equals(Money::parse('180.00')));
     }
 
     public function test_invoice_numbers_are_sequential(): void
@@ -99,9 +99,9 @@ class InvoiceServiceTest extends LedgerTestCase
 
         $this->assertSame(InvoiceStatus::Void, $invoice->status);
         $this->assertNotNull($invoice->void_entry_id);
-        $this->assertTrue($this->account('receivable')->balance()->isZero());
-        $this->assertTrue($this->account('sales')->balance()->isZero());
-        $this->assertTrue($this->account('vat_payable')->balance()->isZero());
+        $this->assertTrue($this->balance('receivable')->isZero());
+        $this->assertTrue($this->balance('sales')->isZero());
+        $this->assertTrue($this->balance('vat_payable')->isZero());
     }
 
     public function test_an_invoice_with_payments_cannot_be_voided(): void

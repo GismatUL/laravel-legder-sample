@@ -3,10 +3,12 @@
 namespace App\Services;
 
 use App\Jobs\ReconcileBankTransactions;
+use App\Repositories\Contracts\BankTransactionRepositoryInterface;
 use App\Support\Money;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Carbon;
 use InvalidArgumentException;
 use SplFileObject;
+use Throwable;
 
 /**
  * Imports a bank statement CSV with the columns: date, amount, reference.
@@ -16,6 +18,8 @@ use SplFileObject;
  */
 class BankStatementImporter
 {
+    public function __construct(private readonly BankTransactionRepositoryInterface $transactions) {}
+
     /**
      * @return int Number of new transactions imported
      */
@@ -32,24 +36,36 @@ class BankStatementImporter
 
         $rows = [];
         $seen = [];
+        $line = 1;
 
         while (! $file->eof()) {
             $values = $file->fgetcsv();
+            $line++;
 
             if ($values === false || $values === [null]) {
                 continue;
             }
 
-            $row = array_combine($header, array_map('trim', $values));
-            $amount = Money::parse($row['amount']);
+            if (count($values) !== count($header)) {
+                throw new InvalidArgumentException("Line {$line}: expected ".count($header).' columns.');
+            }
+
+            $row = array_combine($header, array_map(fn ($value) => trim((string) $value), $values));
+
+            try {
+                $date = Carbon::createFromFormat('!Y-m-d', $row['date']);
+                $amount = Money::parse($row['amount']);
+            } catch (Throwable) {
+                throw new InvalidArgumentException("Line {$line}: invalid date or amount.");
+            }
 
             // Two identical rows in one statement are two real transactions,
             // so the occurrence number is part of the fingerprint.
-            $base = "{$row['date']}|{$amount->minor}|{$row['reference']}";
+            $base = "{$date->toDateString()}|{$amount->minor}|{$row['reference']}";
             $occurrence = $seen[$base] = ($seen[$base] ?? 0) + 1;
 
             $rows[] = [
-                'booked_on' => $row['date'],
+                'booked_on' => $date->toDateString(),
                 'amount' => $amount->minor,
                 'reference' => $row['reference'],
                 'fingerprint' => hash('sha256', "{$base}|{$occurrence}"),
@@ -58,9 +74,7 @@ class BankStatementImporter
             ];
         }
 
-        $imported = DB::transaction(fn () => collect($rows)
-            ->chunk(500)
-            ->sum(fn ($chunk) => DB::table('bank_transactions')->insertOrIgnore($chunk->values()->all())));
+        $imported = $this->transactions->insertNew($rows);
 
         if ($imported > 0) {
             ReconcileBankTransactions::dispatch();

@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 final readonly class NewJournalEntry
 {
     /**
-     * @param  list<EntryLine>  $lines
+     * @param  array<int, EntryLine>  $lines
      */
     public function __construct(
         public CarbonInterface $date,

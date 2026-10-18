@@ -1,0 +1,13 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 7
+    paths:
+        - app
+        - config/ledger.php
+        - database
+        - routes
+        - tests
+    # Read cast types from each model's casts() method body (enums, dates, MoneyCast).
+    parseModelCastsMethod: true
