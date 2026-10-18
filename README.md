@@ -84,6 +84,8 @@ Account codes, control accounts, the invoice prefix, payment terms and outbox ha
 
 ## Database
 
+Each table has its own migration in `database/migrations`, and every table and column (except `id` and the timestamps) has a database comment that explains it. On MySQL you can read them with `SHOW FULL COLUMNS FROM invoices`.
+
 | Table | Notes |
 |---|---|
 | `accounts` | `code` unique. An account with postings can't be deleted (foreign key restrict) |
@@ -97,7 +99,7 @@ Account codes, control accounts, the invoice prefix, payment terms and outbox ha
 | `sequences` | Counters for gap-free numbers. The invoice counter is created by a migration |
 | `users` | `role`. A user referenced by postings, matches or log entries can't be deleted |
 
-On MySQL, a migration adds CHECK constraints that repeat some service rules at the database level:
+On MySQL, the `journal_lines`, `invoices` and `payments` migrations add CHECK constraints that repeat some service rules at the database level:
 
 - a journal line has exactly one positive side;
 - `invoices.total = subtotal + tax_total`;
@@ -105,9 +107,6 @@ On MySQL, a migration adds CHECK constraints that repeat some service rules at t
 - `payments.amount > 0`.
 
 SQLite can't add CHECK constraints to an existing table, so on SQLite only the service checks apply. MySQL needs 8.0.16 or later to enforce them.
-
-Upgrading an existing database: the `2026_10_19_000001` migration adds `users.role` and makes every existing user an admin, because before it every user had full access. New users default to viewer.
-
 ## Background jobs
 
 ```bash

@@ -184,7 +184,7 @@ class ConcurrencyTest extends TestCase
 
         Schema::enableForeignKeyConstraints();
 
-        // As the 2026_10_19_000003 migration leaves it.
+        // As the sequences migration leaves it.
         DB::table('sequences')->insert(['name' => 'invoice', 'next_value' => 1, 'created_at' => now(), 'updated_at' => now()]);
     }
 }
