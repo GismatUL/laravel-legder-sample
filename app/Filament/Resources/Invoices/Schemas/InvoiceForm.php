@@ -1,0 +1,72 @@
+<?php
+
+namespace App\Filament\Resources\Invoices\Schemas;
+
+use App\Support\Money;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Repeater;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
+use Filament\Schemas\Components\Section;
+use Filament\Schemas\Schema;
+
+class InvoiceForm
+{
+    public static function configure(Schema $schema): Schema
+    {
+        return $schema
+            ->columns(1)
+            ->components([
+                Section::make('Invoice')
+                    ->columns(2)
+                    ->schema([
+                        Select::make('customer_id')
+                            ->relationship('customer', 'name')
+                            ->searchable()
+                            ->preload()
+                            ->required(),
+                        DatePicker::make('due_date')
+                            ->helperText('Leave empty to use the default payment terms.'),
+                        Textarea::make('notes')
+                            ->columnSpanFull(),
+                    ]),
+                Section::make('Lines')
+                    ->description('Totals and VAT are calculated on save, from the values below.')
+                    ->schema([
+                        Repeater::make('lines')
+                            ->relationship()
+                            ->hiddenLabel()
+                            ->columns(12)
+                            ->minItems(1)
+                            ->defaultItems(1)
+                            ->schema([
+                                TextInput::make('description')
+                                    ->required()
+                                    ->maxLength(255)
+                                    ->columnSpan(6),
+                                TextInput::make('quantity')
+                                    ->required()
+                                    ->integer()
+                                    ->minValue(1)
+                                    ->default(1)
+                                    ->columnSpan(2),
+                                // Shown as a decimal ("12.50"), stored as minor units (1250).
+                                TextInput::make('unit_price')
+                                    ->required()
+                                    ->regex('/^\d+(\.\d{1,2})?$/')
+                                    ->validationMessages(['regex' => 'Use a positive amount with up to 2 decimals.'])
+                                    ->formatStateUsing(fn ($state) => $state === null ? null : Money::of((int) $state)->toDecimal())
+                                    ->dehydrateStateUsing(fn ($state) => filled($state) ? Money::parse((string) $state)->minor : null)
+                                    ->columnSpan(2),
+                                Select::make('tax_rate_bp')
+                                    ->label('VAT')
+                                    ->options([0 => '0%', 1800 => '18%'])
+                                    ->default(1800)
+                                    ->required()
+                                    ->columnSpan(2),
+                            ]),
+                    ]),
+            ]);
+    }
+}

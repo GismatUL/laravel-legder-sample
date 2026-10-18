@@ -1,0 +1,5 @@
+date,amount,reference
+2026-10-18,885.00,Transfer INV-000001 Customer payment
+2026-10-18,2000.00,INV-000002 partial
+2026-10-18,-35.00,Bank service fee
+2026-10-18,150.00,Unknown sender

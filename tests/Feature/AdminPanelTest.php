@@ -1,0 +1,137 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Enums\InvoiceStatus;
+use App\Filament\Pages\TrialBalance;
+use App\Filament\Resources\Accounts\Pages\ListAccounts;
+use App\Filament\Resources\BankTransactions\Pages\ListBankTransactions;
+use App\Filament\Resources\Invoices\Pages\CreateInvoice;
+use App\Filament\Resources\Invoices\Pages\ListInvoices;
+use App\Filament\Resources\Invoices\Pages\ViewInvoice;
+use App\Filament\Resources\JournalEntries\Pages\CreateJournalEntry;
+use App\Filament\Resources\JournalEntries\Pages\ListJournalEntries;
+use App\Filament\Resources\JournalEntries\Pages\ViewJournalEntry;
+use App\Models\Account;
+use App\Models\Customer;
+use App\Models\Invoice;
+use App\Models\JournalEntry;
+use App\Models\User;
+use App\Services\InvoiceService;
+use Livewire\Livewire;
+
+class AdminPanelTest extends LedgerTestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->actingAs(User::factory()->create());
+    }
+
+    public function test_pages_render(): void
+    {
+        $invoice = app(InvoiceService::class)->issue(Invoice::factory()->withLines([[1, 10000, 1800]])->create());
+
+        Livewire::test(ListAccounts::class)->assertOk()->assertSee('Accounts receivable');
+        Livewire::test(ListInvoices::class)->assertOk()->assertSee($invoice->number);
+        Livewire::test(ViewInvoice::class, ['record' => $invoice->getRouteKey()])->assertOk()->assertSee('118.00 AZN');
+        Livewire::test(ListJournalEntries::class)->assertOk();
+        Livewire::test(ListBankTransactions::class)->assertOk();
+        Livewire::test(TrialBalance::class)->assertOk()->assertSee('Debits equal credits');
+        $this->get('/admin')->assertOk();
+    }
+
+    public function test_creates_a_draft_invoice_with_calculated_totals(): void
+    {
+        $customer = Customer::factory()->create();
+
+        Livewire::test(CreateInvoice::class)
+            ->fillForm([
+                'customer_id' => $customer->id,
+                'lines' => [
+                    ['description' => 'Consulting', 'quantity' => 4, 'unit_price' => '125.50', 'tax_rate_bp' => 1800],
+                ],
+            ])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $invoice = Invoice::sole();
+
+        $this->assertSame(InvoiceStatus::Draft, $invoice->status);
+        $this->assertSame(50200, $invoice->subtotal->minor);
+        $this->assertSame(9036, $invoice->tax_total->minor);
+    }
+
+    public function test_issue_and_payment_actions_go_through_the_services(): void
+    {
+        $invoice = Invoice::factory()->withLines([[1, 10000, 1800]])->create();
+
+        Livewire::test(ViewInvoice::class, ['record' => $invoice->getRouteKey()])
+            ->callAction('issue')
+            ->assertHasNoActionErrors()
+            ->callAction('recordPayment', ['amount' => '18.00', 'paid_on' => today()->toDateString(), 'method' => 'cash'])
+            ->assertHasNoActionErrors();
+
+        $invoice->refresh();
+        $this->assertSame(InvoiceStatus::PartiallyPaid, $invoice->status);
+        $this->assertSame(10000, $invoice->outstanding()->minor);
+    }
+
+    public function test_overpayment_shows_an_error_and_records_nothing(): void
+    {
+        $invoice = app(InvoiceService::class)->issue(Invoice::factory()->withLines([[1, 10000]])->create());
+
+        Livewire::test(ViewInvoice::class, ['record' => $invoice->getRouteKey()])
+            ->callAction('recordPayment', ['amount' => '999.00', 'paid_on' => today()->toDateString(), 'method' => 'cash'])
+            ->assertNotified('Payment of 999.00 AZN exceeds the outstanding balance of 100.00 AZN.');
+
+        $this->assertDatabaseCount('payments', 0);
+    }
+
+    public function test_manual_entry_must_balance(): void
+    {
+        $bank = $this->account('bank')->id;
+        $expense = Account::byCode('6000')->id;
+
+        Livewire::test(CreateJournalEntry::class)
+            ->fillForm([
+                'entry_date' => today()->toDateString(),
+                'description' => 'Office supplies',
+                'lines' => [
+                    ['account_id' => $expense, 'debit' => '50.00', 'credit' => null, 'memo' => null],
+                    ['account_id' => $bank, 'debit' => null, 'credit' => '45.00', 'memo' => null],
+                ],
+            ])
+            ->call('create')
+            ->assertNotified();
+
+        $this->assertDatabaseCount('journal_entries', 0);
+    }
+
+    public function test_manual_entry_can_be_posted_and_reversed(): void
+    {
+        $bank = $this->account('bank')->id;
+        $expense = Account::byCode('6000')->id;
+
+        Livewire::test(CreateJournalEntry::class)
+            ->fillForm([
+                'entry_date' => today()->toDateString(),
+                'description' => 'Office supplies',
+                'lines' => [
+                    ['account_id' => $expense, 'debit' => '50.00', 'credit' => null, 'memo' => null],
+                    ['account_id' => $bank, 'debit' => null, 'credit' => '50.00', 'memo' => null],
+                ],
+            ])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $entry = JournalEntry::sole();
+
+        Livewire::test(ViewJournalEntry::class, ['record' => $entry->getRouteKey()])
+            ->callAction('reverse');
+
+        $this->assertTrue($entry->reversedBy()->exists());
+        $this->assertTrue($this->account('bank')->balance()->isZero());
+    }
+}
