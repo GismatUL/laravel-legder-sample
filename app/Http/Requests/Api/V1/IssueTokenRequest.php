@@ -17,17 +17,17 @@ class IssueTokenRequest extends FormRequest
             'email' => ['required', 'string', 'email'],
             'password' => ['required', 'string'],
             'device_name' => ['required', 'string', 'max:100'],
-            // Defaults to all abilities. Ask for ["ledger:read"] to get a read-only token.
+            // Defaults to everything the user's role allows. Ask for ["ledger:read"] to get a read-only token.
             'abilities' => ['sometimes', 'array', 'min:1'],
             'abilities.*' => ['string', Rule::in(TokenAbility::all())],
         ];
     }
 
     /**
-     * @return list<string>
+     * @return list<string>|null
      */
-    public function abilities(): array
+    public function abilities(): ?array
     {
-        return array_values(array_unique($this->input('abilities', TokenAbility::all())));
+        return $this->has('abilities') ? array_values(array_unique($this->input('abilities'))) : null;
     }
 }

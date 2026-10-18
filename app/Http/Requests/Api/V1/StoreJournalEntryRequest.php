@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1;
 
 use App\Data\ManualEntryLineData;
+use App\Rules\MoneyAmount;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Carbon;
 
@@ -12,8 +13,6 @@ use Illuminate\Support\Carbon;
  */
 class StoreJournalEntryRequest extends FormRequest
 {
-    private const AMOUNT = 'regex:/^\d{1,13}(\.\d{1,2})?$/';
-
     /**
      * @return array<string, mixed>
      */
@@ -24,8 +23,8 @@ class StoreJournalEntryRequest extends FormRequest
             'description' => ['required', 'string', 'max:255'],
             'lines' => ['required', 'array', 'min:2', 'max:100'],
             'lines.*.account_id' => ['required', 'integer', 'exists:accounts,id'],
-            'lines.*.debit' => ['nullable', 'string', self::AMOUNT, 'required_without:lines.*.credit'],
-            'lines.*.credit' => ['nullable', 'string', self::AMOUNT, 'required_without:lines.*.debit'],
+            'lines.*.debit' => ['nullable', new MoneyAmount, 'required_without:lines.*.credit'],
+            'lines.*.credit' => ['nullable', new MoneyAmount, 'required_without:lines.*.debit'],
             'lines.*.memo' => ['nullable', 'string', 'max:255'],
         ];
     }

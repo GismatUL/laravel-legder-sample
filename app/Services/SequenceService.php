@@ -17,17 +17,23 @@ class SequenceService
     public function next(string $name): int
     {
         return DB::transaction(function () use ($name) {
-            DB::table('sequences')->insertOrIgnore([
-                'name' => $name,
-                'next_value' => 1,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+            $value = $this->lockCounter($name);
 
-            $value = (int) DB::table('sequences')
-                ->where('name', $name)
-                ->lockForUpdate()
-                ->value('next_value');
+            if ($value === null) {
+                // First use of this sequence. Known sequences are created by a
+                // migration, so this path doesn't run under load. It must not
+                // run on every call: INSERT IGNORE on an existing row takes a
+                // shared lock, and two callers upgrading it to the FOR UPDATE
+                // lock deadlock each other (found by Tests\Feature\MySql\ConcurrencyTest).
+                DB::table('sequences')->insertOrIgnore([
+                    'name' => $name,
+                    'next_value' => 1,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                $value = (int) $this->lockCounter($name);
+            }
 
             DB::table('sequences')
                 ->where('name', $name)
@@ -35,5 +41,12 @@ class SequenceService
 
             return $value;
         });
+    }
+
+    private function lockCounter(string $name): ?int
+    {
+        $value = DB::table('sequences')->where('name', $name)->lockForUpdate()->value('next_value');
+
+        return $value === null ? null : (int) $value;
     }
 }

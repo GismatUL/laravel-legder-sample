@@ -59,6 +59,16 @@ class BankStatementImporter
                 throw new InvalidArgumentException("Line {$line}: invalid date or amount.");
             }
 
+            // createFromFormat() rolls invalid dates over (2026-13-01 becomes 2027-01-01).
+            if ($date->toDateString() !== $row['date']) {
+                throw new InvalidArgumentException("Line {$line}: invalid date or amount.");
+            }
+
+            // The column is VARCHAR(255): MySQL in strict mode would reject the whole batch.
+            if (mb_strlen($row['reference']) > 255) {
+                throw new InvalidArgumentException("Line {$line}: reference is longer than 255 characters.");
+            }
+
             // Two identical rows in one statement are two real transactions,
             // so the occurrence number is part of the fingerprint.
             $base = "{$date->toDateString()}|{$amount->minor}|{$row['reference']}";

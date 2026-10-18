@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Api\V1;
 
+use App\Enums\PaymentMethod;
 use App\Jobs\ReconcileBankTransactions;
 use App\Services\PaymentService;
 use App\Support\Money;
@@ -49,7 +50,7 @@ class ReportAndBankApiTest extends ApiTestCase
     public function test_reconciled_transactions_show_the_matched_invoice(): void
     {
         $invoice = $this->issuedInvoice();
-        app(PaymentService::class)->record($invoice, Money::parse('118.00'), today(), 'bank_transfer', 'p-1');
+        app(PaymentService::class)->record($invoice, Money::parse('118.00'), today(), PaymentMethod::BankTransfer, 'p-1');
 
         // The queue runs synchronously in tests.
         $this->postJson('/api/v1/bank-statements', [

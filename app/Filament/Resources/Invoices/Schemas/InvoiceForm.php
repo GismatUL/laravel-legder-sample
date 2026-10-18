@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Invoices\Schemas;
 
+use App\Rules\MoneyAmount;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
@@ -53,8 +54,7 @@ class InvoiceForm
                                 // A decimal string ("12.50"); InvoiceService converts it to minor units.
                                 TextInput::make('unit_price')
                                     ->required()
-                                    ->regex('/^\d+(\.\d{1,2})?$/')
-                                    ->validationMessages(['regex' => 'Use a positive amount with up to 2 decimals.'])
+                                    ->rule(new MoneyAmount)
                                     ->columnSpan(2),
                                 Select::make('tax_rate_bp')
                                     ->label('VAT')

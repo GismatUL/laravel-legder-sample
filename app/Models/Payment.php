@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Casts\MoneyCast;
+use App\Enums\PaymentMethod;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -16,6 +17,7 @@ class Payment extends Model
         return [
             'amount' => MoneyCast::class,
             'paid_on' => 'date',
+            'method' => PaymentMethod::class,
         ];
     }
 

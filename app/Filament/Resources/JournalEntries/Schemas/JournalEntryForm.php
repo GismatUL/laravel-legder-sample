@@ -4,6 +4,7 @@ namespace App\Filament\Resources\JournalEntries\Schemas;
 
 use App\Models\Account;
 use App\Repositories\Contracts\AccountRepositoryInterface;
+use App\Rules\MoneyAmount;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
@@ -21,8 +22,7 @@ class JournalEntryForm
     public static function configure(Schema $schema): Schema
     {
         $amount = fn (string $name) => TextInput::make($name)
-            ->regex('/^\d+(\.\d{1,2})?$/')
-            ->validationMessages(['regex' => 'Use a positive amount with up to 2 decimals.'])
+            ->rule(new MoneyAmount)
             ->placeholder('0.00')
             ->columnSpan(2);
 

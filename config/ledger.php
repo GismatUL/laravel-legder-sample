@@ -2,7 +2,9 @@
 
 return [
 
-    // Single-currency ledger. Amounts are stored as integers in minor units.
+    // Single-currency ledger. Amounts are stored as integers in minor units of
+    // this ISO 4217 currency (2 decimals for AZN, see App\Support\Currency).
+    // Don't change it once amounts are stored: they would be reinterpreted.
     'currency' => env('LEDGER_CURRENCY', 'AZN'),
 
     // Chart-of-accounts codes the billing workflow posts to.
@@ -12,6 +14,10 @@ return [
         'vat_payable' => '2100',
         'sales' => '4000',
     ],
+
+    // Accounts (keys above) that manual journal entries can't post to.
+    // Receivables must equal the open invoices, so only invoices and payments post there.
+    'control_accounts' => ['receivable'],
 
     'invoice_prefix' => 'INV-',
 

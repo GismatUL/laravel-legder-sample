@@ -2,10 +2,13 @@
 
 namespace App\Http\Requests\Api\V1;
 
+use App\Enums\PaymentMethod;
+use App\Rules\MoneyAmount;
 use App\Support\Money;
 use Closure;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
 class StorePaymentRequest extends FormRequest
@@ -16,9 +19,9 @@ class StorePaymentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'amount' => ['required', 'string', 'regex:/^\d{1,13}(\.\d{1,2})?$/'],
+            'amount' => ['required', new MoneyAmount],
             'paid_on' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
-            'method' => ['required', 'string', 'in:bank_transfer,card,cash'],
+            'method' => ['required', Rule::enum(PaymentMethod::class)],
             'reference' => ['nullable', 'string', 'max:100'],
         ];
     }
@@ -41,16 +44,6 @@ class StorePaymentRequest extends FormRequest
         ];
     }
 
-    /**
-     * @return array<string, string>
-     */
-    public function messages(): array
-    {
-        return [
-            'amount.regex' => 'The amount must be a decimal string with up to 2 decimals, e.g. "118.00".',
-        ];
-    }
-
     public function idempotencyKey(): string
     {
         return trim((string) $this->header('Idempotency-Key'));
@@ -64,5 +57,10 @@ class StorePaymentRequest extends FormRequest
     public function paidOn(): Carbon
     {
         return Carbon::parse($this->string('paid_on')->toString());
+    }
+
+    public function paymentMethod(): PaymentMethod
+    {
+        return $this->enum('method', PaymentMethod::class) ?? PaymentMethod::BankTransfer;
     }
 }

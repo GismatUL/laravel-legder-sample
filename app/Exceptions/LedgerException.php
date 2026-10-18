@@ -31,6 +31,11 @@ class LedgerException extends DomainRuleException
         return new self("Account #{$accountId} does not exist.", 'ledger.unknown_account');
     }
 
+    public static function controlAccount(string $accountCode): self
+    {
+        return new self("Account {$accountCode} is a control account and only accepts postings from its documents (invoices, payments).", 'ledger.control_account');
+    }
+
     public static function accountHasPostings(string $accountCode): self
     {
         return new self("Account {$accountCode} has postings, so its code and type can no longer change.", 'ledger.account_has_postings', 409);

@@ -50,14 +50,16 @@ class AuthTest extends ApiTestCase
 
         $this->postJson('/api/v1/auth/tokens', ['email' => 'api@example.com', 'password' => 'x', 'device_name' => 'x'])
             ->assertTooManyRequests()
-            ->assertJsonPath('message', 'Too Many Attempts.');
+            ->assertHeader('Retry-After')
+            ->assertJsonPath('code', 'too_many_requests');
     }
 
     public function test_requests_without_a_token_are_rejected(): void
     {
         $this->getJson('/api/v1/invoices')
             ->assertUnauthorized()
-            ->assertJsonPath('message', 'Unauthenticated.');
+            ->assertJsonPath('message', 'Unauthenticated.')
+            ->assertJsonPath('code', 'unauthenticated');
     }
 
     public function test_read_only_token_cannot_write(): void
@@ -67,7 +69,17 @@ class AuthTest extends ApiTestCase
         $this->getJson('/api/v1/customers')->assertOk();
         $this->postJson('/api/v1/customers', ['name' => 'Acme'])
             ->assertForbidden()
-            ->assertJsonPath('message', 'Invalid ability provided.');
+            ->assertJsonPath('code', 'forbidden');
+    }
+
+    public function test_validation_errors_carry_a_code(): void
+    {
+        $this->actingAsApiUser();
+
+        $this->postJson('/api/v1/customers', [])
+            ->assertUnprocessable()
+            ->assertJsonPath('code', 'validation_failed')
+            ->assertJsonValidationErrors(['name']);
     }
 
     public function test_api_docs_are_not_public_outside_local(): void

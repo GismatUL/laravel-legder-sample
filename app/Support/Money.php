@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Exceptions\MoneyException;
 use InvalidArgumentException;
 use JsonSerializable;
 use Stringable;
@@ -11,6 +12,9 @@ use Stringable;
  *
  * Floats are never used for amounts: 0.1 + 0.2 !== 0.3 in IEEE 754,
  * and rounding errors in a ledger turn into balances that don't add up.
+ *
+ * PHP silently turns an integer that overflows into a float, so every
+ * operation checks its result and throws MoneyException instead.
  */
 final class Money implements JsonSerializable, Stringable
 {
@@ -21,7 +25,10 @@ final class Money implements JsonSerializable, Stringable
 
     public static function of(int $minor, ?string $currency = null): self
     {
-        return new self($minor, $currency ?? config('ledger.currency'));
+        $currency ??= (string) config('ledger.currency');
+        Currency::assertValid($currency);
+
+        return new self($minor, $currency);
     }
 
     public static function zero(?string $currency = null): self
@@ -31,16 +38,28 @@ final class Money implements JsonSerializable, Stringable
 
     /**
      * Parse a decimal string such as "1234.56" without going through float.
+     * The number of decimals allowed is the currency's (2 for AZN, 0 for JPY).
      */
     public static function parse(string $amount, ?string $currency = null): self
     {
+        $currency ??= (string) config('ledger.currency');
+        $decimals = Currency::minorUnits($currency);
         $amount = trim($amount);
+        $fraction = $decimals > 0 ? "(?:\\.(\\d{1,{$decimals}}))?" : '';
 
-        if (! preg_match('/^(-)?(\d+)(?:\.(\d{1,2}))?$/', $amount, $m)) {
+        if (! preg_match("/^(-)?(\\d+){$fraction}$/", $amount, $m)) {
             throw new InvalidArgumentException("Invalid money amount [{$amount}].");
         }
 
-        $minor = (int) $m[2] * 100 + (int) str_pad($m[3] ?? '0', 2, '0');
+        // (int) of a string longer than PHP_INT_MAX saturates instead of failing.
+        $whole = ltrim($m[2], '0');
+
+        if (strlen($whole) > 18) {
+            throw MoneyException::overflow();
+        }
+
+        $minor = self::checked((int) $whole * 10 ** $decimals);
+        $minor = self::checked($minor + (int) str_pad($m[3] ?? '', $decimals, '0'));
 
         return self::of($m[1] === '-' ? -$minor : $minor, $currency);
     }
@@ -49,19 +68,19 @@ final class Money implements JsonSerializable, Stringable
     {
         $this->assertSameCurrency($other);
 
-        return new self($this->minor + $other->minor, $this->currency);
+        return new self(self::checked($this->minor + $other->minor), $this->currency);
     }
 
     public function subtract(self $other): self
     {
         $this->assertSameCurrency($other);
 
-        return new self($this->minor - $other->minor, $this->currency);
+        return new self(self::checked($this->minor - $other->minor), $this->currency);
     }
 
     public function multiply(int $factor): self
     {
-        return new self($this->minor * $factor, $this->currency);
+        return new self(self::checked($this->minor * $factor), $this->currency);
     }
 
     /**
@@ -69,8 +88,8 @@ final class Money implements JsonSerializable, Stringable
      */
     public function percentage(int $basisPoints): self
     {
-        $raw = $this->minor * $basisPoints;
-        $rounded = intdiv($raw + ($raw >= 0 ? 5000 : -5000), 10000);
+        $raw = self::checked($this->minor * $basisPoints);
+        $rounded = intdiv(self::checked($raw + ($raw >= 0 ? 5000 : -5000)), 10000);
 
         return new self($rounded, $this->currency);
     }
@@ -98,7 +117,7 @@ final class Money implements JsonSerializable, Stringable
         $parts = [];
 
         foreach ($ratios as $ratio) {
-            $share = intdiv($this->minor * $ratio, $total);
+            $share = intdiv(self::checked($this->minor * $ratio), $total);
             $parts[] = $share;
             $remainder -= $share;
         }
@@ -134,17 +153,12 @@ final class Money implements JsonSerializable, Stringable
 
     public function toDecimal(): string
     {
-        $abs = abs($this->minor);
-
-        return ($this->minor < 0 ? '-' : '').intdiv($abs, 100).'.'.str_pad((string) ($abs % 100), 2, '0', STR_PAD_LEFT);
+        return $this->sign().$this->unsignedDecimal(fn (int $whole) => (string) $whole);
     }
 
     public function format(): string
     {
-        $abs = abs($this->minor);
-
-        return ($this->minor < 0 ? '-' : '').number_format(intdiv($abs, 100)).'.'
-            .str_pad((string) ($abs % 100), 2, '0', STR_PAD_LEFT).' '.$this->currency;
+        return $this->sign().$this->unsignedDecimal(fn (int $whole) => number_format($whole)).' '.$this->currency;
     }
 
     /**
@@ -158,6 +172,34 @@ final class Money implements JsonSerializable, Stringable
     public function __toString(): string
     {
         return $this->format();
+    }
+
+    private function sign(): string
+    {
+        return $this->minor < 0 ? '-' : '';
+    }
+
+    /**
+     * @param  callable(int): string  $formatWhole
+     */
+    private function unsignedDecimal(callable $formatWhole): string
+    {
+        $decimals = Currency::minorUnits($this->currency);
+        // abs(PHP_INT_MIN) overflows; no ledger amount gets near it, but don't guess.
+        $abs = self::checked(abs($this->minor));
+        $factor = 10 ** $decimals;
+        $whole = $formatWhole(intdiv($abs, $factor));
+
+        return $decimals === 0 ? $whole : $whole.'.'.str_pad((string) ($abs % $factor), $decimals, '0', STR_PAD_LEFT);
+    }
+
+    private static function checked(int|float $value): int
+    {
+        if (! is_int($value)) {
+            throw MoneyException::overflow();
+        }
+
+        return $value;
     }
 
     private function assertSameCurrency(self $other): void

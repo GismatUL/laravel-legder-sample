@@ -27,6 +27,9 @@ jobs:
           extensions: intl, pdo_mysql, pdo_sqlite, zip
           coverage: none
 
+      - name: Validate composer.json and composer.lock
+        run: composer validate --no-check-publish
+
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
 
@@ -42,8 +45,23 @@ jobs:
         run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
 
       # Run the suite on MySQL too: row locks (lockForUpdate) are a no-op on SQLite.
+      # The MySQL-only tests (CHECK constraints, multi-process concurrency) are skipped on SQLite.
       - name: Tests (SQLite)
         run: php artisan test
+
+      # A fresh clone's setup path: every migration, the demo seeder, the
+      # ledger check (exits 1 if debits != credits), and every down() method.
+      - name: Migrate, seed and roll back on a clean MySQL database
+        run: |
+          php artisan migrate:fresh --seed --force
+          php artisan ledger:trial-balance
+          php artisan migrate:rollback --force
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_DATABASE: ledger_test
+          DB_USERNAME: root
+          DB_PASSWORD: ''
 
       - name: Tests (MySQL)
         run: php artisan test
