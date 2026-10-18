@@ -3,18 +3,19 @@
 namespace App\Filament\Resources\Invoices;
 
 use App\Enums\InvoiceStatus;
+use App\Exceptions\DomainRuleException;
 use App\Models\Invoice;
 use App\Services\InvoiceService;
 use App\Services\PaymentService;
 use App\Support\Money;
 use Closure;
-use DomainException;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
+use Filament\Support\Exceptions\Halt;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
@@ -86,12 +87,14 @@ class InvoiceActions
      */
     private static function guarded(Closure $callback, string $success): Closure
     {
-        return function (Invoice $record, Action $action, array $data = []) use ($callback, $success) {
+        return function (Invoice $record, array $data = []) use ($callback, $success) {
             try {
                 $callback($record, $data);
-            } catch (DomainException $e) {
+            } catch (DomainRuleException $e) {
                 Notification::make()->danger()->title($e->getMessage())->send();
-                $action->halt();
+
+                // Keeps the modal open so the user can correct the input.
+                throw new Halt;
             }
 
             $record->refresh();

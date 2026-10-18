@@ -17,4 +17,7 @@ return [
 
     'payment_terms_days' => 14,
 
+    // API tokens expire; clients request a new one with their credentials.
+    'api_token_days' => (int) env('LEDGER_API_TOKEN_DAYS', 30),
+
 ];

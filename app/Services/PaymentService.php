@@ -6,16 +6,22 @@ use App\Data\EntryLine;
 use App\Data\NewJournalEntry;
 use App\Enums\InvoiceStatus;
 use App\Exceptions\BillingException;
-use App\Models\Account;
 use App\Models\Invoice;
 use App\Models\Payment;
+use App\Repositories\Contracts\InvoiceRepositoryInterface;
+use App\Repositories\Contracts\PaymentRepositoryInterface;
 use App\Support\Money;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 
 class PaymentService
 {
-    public function __construct(private readonly LedgerService $ledger) {}
+    public function __construct(
+        private readonly LedgerService $ledger,
+        private readonly ChartOfAccounts $chart,
+        private readonly InvoiceRepositoryInterface $invoices,
+        private readonly PaymentRepositoryInterface $payments,
+    ) {}
 
     /**
      * Record a customer payment against an invoice and post:
@@ -40,9 +46,9 @@ class PaymentService
         return DB::transaction(function () use ($invoice, $amount, $paidOn, $method, $idempotencyKey, $reference) {
             // Lock first, then check the key: a duplicate request waits here
             // until the first one commits, and then finds its payment.
-            $invoice = Invoice::query()->whereKey($invoice->getKey())->lockForUpdate()->firstOrFail();
+            $invoice = $this->invoices->findForUpdate($invoice->getKey());
 
-            if ($existing = Payment::query()->where('idempotency_key', $idempotencyKey)->first()) {
+            if ($existing = $this->payments->findByIdempotencyKey($idempotencyKey)) {
                 if ((int) $existing->invoice_id !== (int) $invoice->getKey() || ! $existing->amount->equals($amount)) {
                     throw BillingException::idempotencyConflict($idempotencyKey);
                 }
@@ -58,20 +64,18 @@ class PaymentService
                 throw BillingException::overpayment($amount, $invoice->outstanding());
             }
 
-            $accounts = config('ledger.accounts');
-
             $entry = $this->ledger->post(new NewJournalEntry(
                 date: $paidOn,
                 description: "Payment for invoice {$invoice->number}",
                 lines: [
-                    EntryLine::debit(Account::byCode($accounts['bank']), $amount, $reference),
-                    EntryLine::credit(Account::byCode($accounts['receivable']), $amount, $invoice->number),
+                    EntryLine::debit($this->chart->bank(), $amount, $reference),
+                    EntryLine::credit($this->chart->receivable(), $amount, $invoice->number),
                 ],
                 idempotencyKey: "payment:{$idempotencyKey}",
                 source: $invoice,
             ));
 
-            $payment = $invoice->payments()->create([
+            $payment = $this->payments->create($invoice, [
                 'amount' => $amount,
                 'paid_on' => $paidOn,
                 'method' => $method,
@@ -82,10 +86,10 @@ class PaymentService
 
             $paid = $invoice->amount_paid->add($amount);
 
-            $invoice->forceFill([
+            $this->invoices->update($invoice, [
                 'amount_paid' => $paid,
                 'status' => $paid->equals($invoice->total) ? InvoiceStatus::Paid : InvoiceStatus::PartiallyPaid,
-            ])->save();
+            ]);
 
             return $payment;
         });

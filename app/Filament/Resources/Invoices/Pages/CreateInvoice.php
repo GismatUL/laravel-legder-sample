@@ -2,17 +2,19 @@
 
 namespace App\Filament\Resources\Invoices\Pages;
 
+use App\Data\InvoiceData;
 use App\Filament\Resources\Invoices\InvoiceResource;
 use App\Services\InvoiceService;
 use Filament\Resources\Pages\CreateRecord;
+use Illuminate\Database\Eloquent\Model;
 
 class CreateInvoice extends CreateRecord
 {
     protected static string $resource = InvoiceResource::class;
 
-    protected function afterCreate(): void
+    protected function handleRecordCreation(array $data): Model
     {
-        app(InvoiceService::class)->recalculate($this->record);
+        return app(InvoiceService::class)->createDraft(InvoiceData::fromInput($data));
     }
 
     protected function getRedirectUrl(): string

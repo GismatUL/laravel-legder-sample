@@ -24,11 +24,6 @@ class Account extends Model
         ];
     }
 
-    public static function byCode(string $code): self
-    {
-        return static::query()->where('code', $code)->firstOrFail();
-    }
-
     /** @return HasMany<JournalLine, $this> */
     public function lines(): HasMany
     {
@@ -38,19 +33,18 @@ class Account extends Model
     /**
      * Balance on the account's normal side (positive = normal balance).
      */
-    public function balance(): Money
-    {
-        $totals = $this->lines()
-            ->selectRaw('COALESCE(SUM(debit), 0) AS debits, COALESCE(SUM(credit), 0) AS credits')
-            ->first();
-
-        return $this->normalBalance((int) $totals->debits, (int) $totals->credits);
-    }
-
     public function normalBalance(int $debits, int $credits): Money
     {
         $net = $debits - $credits;
 
         return Money::of($this->type->isDebitNormal() ? $net : -$net);
+    }
+
+    /**
+     * Uses the `lines_sum_*` aggregates loaded by the repository.
+     */
+    public function loadedBalance(): Money
+    {
+        return $this->normalBalance((int) $this->getAttribute('lines_sum_debit'), (int) $this->getAttribute('lines_sum_credit'));
     }
 }

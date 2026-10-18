@@ -48,12 +48,12 @@ class InvoiceResource extends Resource
     /** Only drafts can be changed. Issued invoices are corrected by voiding. */
     public static function canEdit(Model $record): bool
     {
-        return $record->isEditable();
+        return $record instanceof Invoice && $record->isEditable();
     }
 
     public static function canDelete(Model $record): bool
     {
-        return $record->isEditable();
+        return $record instanceof Invoice && $record->isEditable();
     }
 
     public static function getPages(): array

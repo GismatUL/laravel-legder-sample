@@ -80,7 +80,7 @@ final class Money implements JsonSerializable, Stringable
      * goes to the first parts, so the parts always sum to the original.
      *
      * @param  list<int>  $ratios
-     * @return list<self>
+     * @return array<int, self>
      */
     public function allocate(array $ratios): array
     {
@@ -147,6 +147,9 @@ final class Money implements JsonSerializable, Stringable
             .str_pad((string) ($abs % 100), 2, '0', STR_PAD_LEFT).' '.$this->currency;
     }
 
+    /**
+     * @return array{amount: string, currency: string}
+     */
     public function jsonSerialize(): array
     {
         return ['amount' => $this->toDecimal(), 'currency' => $this->currency];

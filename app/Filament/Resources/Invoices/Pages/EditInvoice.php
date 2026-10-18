@@ -2,12 +2,20 @@
 
 namespace App\Filament\Resources\Invoices\Pages;
 
+use App\Data\InvoiceData;
 use App\Filament\Resources\Invoices\InvoiceResource;
+use App\Models\Invoice;
+use App\Models\InvoiceLine;
 use App\Services\InvoiceService;
+use App\Support\Money;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\ViewAction;
 use Filament\Resources\Pages\EditRecord;
+use Illuminate\Database\Eloquent\Model;
 
+/**
+ * @property Invoice $record
+ */
 class EditInvoice extends EditRecord
 {
     protected static string $resource = InvoiceResource::class;
@@ -16,13 +24,34 @@ class EditInvoice extends EditRecord
     {
         return [
             ViewAction::make(),
-            DeleteAction::make(),
+            DeleteAction::make()
+                ->using(fn (Invoice $record) => app(InvoiceService::class)->deleteDraft($record)),
         ];
     }
 
-    protected function afterSave(): void
+    /**
+     * Only the fields the form edits. The model's Money attributes can't be
+     * Livewire state, and totals are recalculated by InvoiceService anyway.
+     */
+    protected function mutateFormDataBeforeFill(array $data): array
     {
-        app(InvoiceService::class)->recalculate($this->record);
+        return [
+            'customer_id' => $this->record->customer_id,
+            'due_date' => $this->record->due_date?->toDateString(),
+            'notes' => $this->record->notes,
+            'lines' => $this->record->lines->map(fn (InvoiceLine $line) => [
+                'description' => $line->description,
+                'quantity' => $line->quantity,
+                'unit_price' => Money::of($line->unit_price)->toDecimal(),
+                'tax_rate_bp' => $line->tax_rate_bp,
+            ])->all(),
+        ];
+    }
+
+    protected function handleRecordUpdate(Model $record, array $data): Model
+    {
+        /** @var Invoice $record */
+        return app(InvoiceService::class)->updateDraft($record, InvoiceData::fromInput($data));
     }
 
     protected function getRedirectUrl(): string

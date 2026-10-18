@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\BankTransaction;
 use App\Models\Payment;
+use App\Repositories\Contracts\BankTransactionRepositoryInterface;
+use App\Repositories\Contracts\PaymentRepositoryInterface;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -13,20 +15,25 @@ use Illuminate\Support\Facades\DB;
  */
 class BankReconciler
 {
+    public function __construct(
+        private readonly BankTransactionRepositoryInterface $transactions,
+        private readonly PaymentRepositoryInterface $payments,
+    ) {}
+
     public function reconcile(BankTransaction $transaction): bool
     {
         if ($transaction->reconciled_at !== null || $transaction->amount->isNegative()) {
             return false;
         }
 
-        $prefix = preg_quote(config('ledger.invoice_prefix'), '/');
+        $prefix = preg_quote((string) config('ledger.invoice_prefix'), '/');
 
         if (! preg_match("/{$prefix}\d+/i", $transaction->reference, $match)) {
             return false;
         }
 
         return DB::transaction(function () use ($transaction, $match) {
-            $transaction = BankTransaction::query()->whereKey($transaction->getKey())->lockForUpdate()->first();
+            $transaction = $this->transactions->findForUpdate($transaction->getKey());
 
             if ($transaction->reconciled_at !== null) {
                 return false;
@@ -34,12 +41,7 @@ class BankReconciler
 
             // If several payments on the invoice have the same amount, take
             // the one recorded closest to the bank booking date.
-            $payment = Payment::query()
-                ->whereHas('invoice', fn ($q) => $q->where('number', strtoupper($match[0])))
-                ->where('amount', $transaction->amount->minor)
-                ->whereDoesntHave('bankTransaction')
-                ->lockForUpdate()
-                ->get()
+            $payment = $this->payments->unmatchedForUpdate(strtoupper($match[0]), $transaction->amount)
                 ->sortBy(fn (Payment $p) => abs($p->paid_on->diffInDays($transaction->booked_on)))
                 ->first();
 
@@ -47,10 +49,7 @@ class BankReconciler
                 return false;
             }
 
-            $transaction->forceFill([
-                'payment_id' => $payment->getKey(),
-                'reconciled_at' => now(),
-            ])->save();
+            $this->transactions->markReconciled($transaction, $payment->getKey());
 
             return true;
         });

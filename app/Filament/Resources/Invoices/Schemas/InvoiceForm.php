@@ -2,7 +2,6 @@
 
 namespace App\Filament\Resources\Invoices\Schemas;
 
-use App\Support\Money;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
@@ -34,8 +33,8 @@ class InvoiceForm
                 Section::make('Lines')
                     ->description('Totals and VAT are calculated on save, from the values below.')
                     ->schema([
+                        // Not a relationship repeater: lines are saved by InvoiceService, the same as the API.
                         Repeater::make('lines')
-                            ->relationship()
                             ->hiddenLabel()
                             ->columns(12)
                             ->minItems(1)
@@ -51,13 +50,11 @@ class InvoiceForm
                                     ->minValue(1)
                                     ->default(1)
                                     ->columnSpan(2),
-                                // Shown as a decimal ("12.50"), stored as minor units (1250).
+                                // A decimal string ("12.50"); InvoiceService converts it to minor units.
                                 TextInput::make('unit_price')
                                     ->required()
                                     ->regex('/^\d+(\.\d{1,2})?$/')
                                     ->validationMessages(['regex' => 'Use a positive amount with up to 2 decimals.'])
-                                    ->formatStateUsing(fn ($state) => $state === null ? null : Money::of((int) $state)->toDecimal())
-                                    ->dehydrateStateUsing(fn ($state) => filled($state) ? Money::parse((string) $state)->minor : null)
                                     ->columnSpan(2),
                                 Select::make('tax_rate_bp')
                                     ->label('VAT')

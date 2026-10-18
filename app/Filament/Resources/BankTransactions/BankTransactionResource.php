@@ -5,6 +5,7 @@ namespace App\Filament\Resources\BankTransactions;
 use App\Filament\Resources\BankTransactions\Pages\ListBankTransactions;
 use App\Filament\Resources\BankTransactions\Tables\BankTransactionsTable;
 use App\Models\BankTransaction;
+use App\Repositories\Contracts\BankTransactionRepositoryInterface;
 use BackedEnum;
 use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
@@ -30,7 +31,7 @@ class BankTransactionResource extends Resource
 
     public static function getNavigationBadge(): ?string
     {
-        $count = BankTransaction::unreconciled()->count();
+        $count = app(BankTransactionRepositoryInterface::class)->countUnreconciled();
 
         return $count > 0 ? (string) $count : null;
     }

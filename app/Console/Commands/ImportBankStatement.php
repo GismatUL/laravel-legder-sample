@@ -15,8 +15,8 @@ class ImportBankStatement extends Command
     {
         $path = $this->argument('path');
 
-        if (! is_readable($path)) {
-            $this->error("Cannot read [{$path}].");
+        if (! is_string($path) || ! is_readable($path)) {
+            $this->error('Cannot read the statement file.');
 
             return self::FAILURE;
         }

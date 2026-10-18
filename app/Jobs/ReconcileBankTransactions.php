@@ -2,7 +2,7 @@
 
 namespace App\Jobs;
 
-use App\Models\BankTransaction;
+use App\Repositories\Contracts\BankTransactionRepositoryInterface;
 use App\Services\BankReconciler;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -22,19 +22,19 @@ class ReconcileBankTransactions implements ShouldBeUnique, ShouldQueue
 
     public int $uniqueFor = 600;
 
-    public function handle(BankReconciler $reconciler): void
+    public function handle(BankReconciler $reconciler, BankTransactionRepositoryInterface $transactions): void
     {
         $matched = 0;
 
-        BankTransaction::query()
-            ->unreconciled()
-            ->where('amount', '>', 0)
-            ->chunkById(200, function ($transactions) use ($reconciler, &$matched) {
-                foreach ($transactions as $transaction) {
-                    $matched += (int) $reconciler->reconcile($transaction);
-                }
-            });
+        $transactions->chunkUnreconciledIncoming(200, function ($chunk) use ($reconciler, &$matched) {
+            foreach ($chunk as $transaction) {
+                $matched += (int) $reconciler->reconcile($transaction);
+            }
+        });
 
-        Log::info('Bank reconciliation finished', ['matched' => $matched]);
+        Log::info('Bank reconciliation finished', [
+            'matched' => $matched,
+            'unreconciled' => $transactions->countUnreconciled(),
+        ]);
     }
 }

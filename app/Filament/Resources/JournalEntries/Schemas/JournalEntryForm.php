@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\JournalEntries\Schemas;
 
 use App\Models\Account;
+use App\Repositories\Contracts\AccountRepositoryInterface;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
@@ -50,10 +51,8 @@ class JournalEntryForm
                             ->schema([
                                 Select::make('account_id')
                                     ->label('Account')
-                                    ->options(fn () => Account::query()
-                                        ->where('is_active', true)
-                                        ->orderBy('code')
-                                        ->get()
+                                    ->options(fn () => app(AccountRepositoryInterface::class)
+                                        ->active()
                                         ->mapWithKeys(fn (Account $a) => [$a->id => "{$a->code} {$a->name}"]))
                                     ->searchable()
                                     ->required()
