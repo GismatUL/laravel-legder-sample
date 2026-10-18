@@ -12,7 +12,6 @@ class ImportBankStatementRequest extends FormRequest
     public function rules(): array
     {
         return [
-            // CSV with the columns: date, amount, reference. Max 2 MB.
             'statement' => ['required', 'file', 'mimes:csv,txt', 'max:2048'],
         ];
     }

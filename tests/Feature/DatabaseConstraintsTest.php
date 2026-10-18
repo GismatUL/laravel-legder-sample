@@ -20,7 +20,7 @@ class DatabaseConstraintsTest extends LedgerTestCase
     private function requireMySql(): void
     {
         if (! in_array(DB::connection()->getDriverName(), ['mysql', 'mariadb'], true)) {
-            $this->markTestSkipped('CHECK constraints are added on MySQL only (see the 2026_10_19_000002 migration).');
+            $this->markTestSkipped('CHECK constraints are added on MySQL only (see the journal_lines, invoices and payments migrations).');
         }
     }
 

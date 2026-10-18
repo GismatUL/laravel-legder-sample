@@ -37,8 +37,6 @@ interface InvoiceRepositoryInterface
     public function update(Invoice $invoice, array $attributes): Invoice;
 
     /**
-     * Replace all lines of a draft invoice.
-     *
      * @param  list<InvoiceLineData>  $lines
      */
     public function replaceLines(Invoice $invoice, array $lines): void;

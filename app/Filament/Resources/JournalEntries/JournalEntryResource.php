@@ -17,9 +17,6 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Model;
 use UnitEnum;
 
-/**
- * Journal entries can be posted and reversed, but never edited or deleted.
- */
 class JournalEntryResource extends Resource
 {
     protected static ?string $model = JournalEntry::class;

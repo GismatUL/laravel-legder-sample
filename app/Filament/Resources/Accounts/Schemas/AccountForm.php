@@ -13,8 +13,6 @@ class AccountForm
 {
     public static function configure(Schema $schema): Schema
     {
-        // Once an account has postings, changing its code or type would
-        // silently change the meaning of past entries.
         $hasPostings = fn (?Account $record) => $record?->lines()->exists() ?? false;
 
         return $schema
