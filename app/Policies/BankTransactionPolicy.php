@@ -23,6 +23,12 @@ class BankTransactionPolicy
         return $user->role->canBookkeep();
     }
 
+    /** Matching a bank line to a payment by hand. */
+    public function reconcile(User $user, ?BankTransaction $transaction = null): bool
+    {
+        return $user->role->canBookkeep();
+    }
+
     public function update(User $user, BankTransaction $transaction): bool
     {
         return false;

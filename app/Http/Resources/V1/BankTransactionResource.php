@@ -24,6 +24,8 @@ class BankTransactionResource extends JsonResource
             'payment_id' => $this->payment_id,
             'invoice_number' => $this->whenLoaded('payment', fn () => $this->payment?->invoice->number),
             'reconciled_at' => $this->reconciled_at?->toIso8601String(),
+            'match_method' => $this->match_method,
+            'matched_by' => $this->matched_by,
         ];
     }
 }

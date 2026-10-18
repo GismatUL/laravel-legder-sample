@@ -26,6 +26,12 @@ class BankTransaction extends Model
         return $this->belongsTo(Payment::class);
     }
 
+    /** @return BelongsTo<User, $this> */
+    public function matchedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'matched_by');
+    }
+
     /** @param  Builder<BankTransaction>  $query */
     public function scopeUnreconciled(Builder $query): void
     {
