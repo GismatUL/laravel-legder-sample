@@ -37,6 +37,9 @@ class JournalEntryInfolist
                             ->label('Reversed by')
                             ->placeholder('-'),
                         TextEntry::make('posted_at')->dateTime(),
+                        TextEntry::make('postedBy.name')
+                            ->label('Posted by')
+                            ->placeholder('System'),
                     ]),
                 Section::make('Lines')
                     ->schema([

@@ -12,6 +12,7 @@ use App\Repositories\Contracts\JournalEntryRepositoryInterface;
 use App\Support\Money;
 use Carbon\CarbonInterface;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -137,6 +138,8 @@ class LedgerService
             'idempotency_key' => $entry->idempotencyKey,
             'reversal_of_id' => $reversalOf?->getKey(),
             'posted_at' => now(),
+            // The authenticated user (web session or API token); null for jobs, seeders and the CLI.
+            'posted_by' => Auth::id(),
         ], $entry->lines, $entry->source);
     }
 

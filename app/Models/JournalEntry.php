@@ -37,6 +37,12 @@ class JournalEntry extends Model
         return 'JE-'.str_pad((string) $this->getKey(), 6, '0', STR_PAD_LEFT);
     }
 
+    /** @return BelongsTo<User, $this> */
+    public function postedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'posted_by');
+    }
+
     /** @return HasMany<JournalLine, $this> */
     public function lines(): HasMany
     {

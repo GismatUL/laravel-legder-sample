@@ -2,6 +2,9 @@
 
 namespace App\Providers;
 
+use App\Models\Account;
+use App\Models\BankTransaction;
+use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\User;
 use App\Support\OpenApi\MoneyToSchema;
@@ -37,6 +40,9 @@ class AppServiceProvider extends ServiceProvider
 
         // Store "invoice" instead of a PHP class name in polymorphic columns.
         Relation::enforceMorphMap([
+            'account' => Account::class,
+            'bank_transaction' => BankTransaction::class,
+            'customer' => Customer::class,
             'invoice' => Invoice::class,
             'user' => User::class,
         ]);
