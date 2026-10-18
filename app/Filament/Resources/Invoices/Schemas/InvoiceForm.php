@@ -51,7 +51,6 @@ class InvoiceForm
                                     ->minValue(1)
                                     ->default(1)
                                     ->columnSpan(2),
-                                // A decimal string ("12.50"); InvoiceService converts it to minor units.
                                 TextInput::make('unit_price')
                                     ->required()
                                     ->rule(new MoneyAmount)

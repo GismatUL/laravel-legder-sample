@@ -7,8 +7,6 @@ use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Stores Money as a NOT NULL integer column of minor units.
- *
  * @implements CastsAttributes<Money, Money|int>
  */
 class MoneyCast implements CastsAttributes

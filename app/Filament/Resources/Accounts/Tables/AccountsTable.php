@@ -15,7 +15,6 @@ class AccountsTable
     public static function configure(Table $table): Table
     {
         return $table
-            // Load the debit/credit totals in the list query instead of one query per row.
             ->modifyQueryUsing(fn ($query) => $query->withSum('lines', 'debit')->withSum('lines', 'credit'))
             ->defaultSort('code')
             ->columns([

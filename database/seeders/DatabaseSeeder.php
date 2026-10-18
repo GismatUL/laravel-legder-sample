@@ -14,11 +14,7 @@ use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
-    /**
-     * Seed the application's database.
-     *
-     * Model events stay on: the ledger's immutability guards are model events.
-     */
+    // Model events stay on: the ledger's immutability guards are model events.
     public function run(InvoiceService $invoices, PaymentService $payments): void
     {
         $this->call(ChartOfAccountsSeeder::class);

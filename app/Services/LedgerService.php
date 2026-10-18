@@ -138,7 +138,6 @@ class LedgerService
             'idempotency_key' => $entry->idempotencyKey,
             'reversal_of_id' => $reversalOf?->getKey(),
             'posted_at' => now(),
-            // The authenticated user (web session or API token); null for jobs, seeders and the CLI.
             'posted_by' => Auth::id(),
         ], $entry->lines, $entry->source);
     }
