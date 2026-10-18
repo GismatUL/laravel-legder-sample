@@ -1,5 +1,7 @@
 # Ledger Sample: double-entry accounting in Laravel
 
+[![tests](https://github.com/GismatUL/laravel-legder-sample/actions/workflows/tests.yml/badge.svg)](https://github.com/GismatUL/laravel-legder-sample/actions/workflows/tests.yml)
+
 A small accounting backend built with **Laravel 13**, **MySQL 8** and **Filament 5**. It has a versioned REST API and an admin panel. I wrote it as a code sample to show how I handle financial data in Laravel: double-entry bookkeeping, invoicing, payments and bank reconciliation, with the rules enforced in the service layer, backed by database constraints, and covered by tests, including real multi-process concurrency tests on MySQL.
 
 It is a code sample, not a production system. The scope is kept small on purpose so the important parts are easy to review. [Known limitations](#known-limitations-and-production-considerations) lists what a production deployment would still need.
@@ -31,8 +33,10 @@ I built it with AI assistance (Claude Code), the same way I work day to day. I r
 | **General ledger** | Chart of accounts, journal entries with debit/credit lines, manual entries, reversals, trial balance |
 | **Invoicing** | Draft → Issued → Partially paid / Paid, or Void. Per-line VAT. Gap-free invoice numbers |
 | **Payments** | Partial and full payments, overpayment protection, idempotent recording (`Idempotency-Key`) |
-| **Bank reconciliation** | CSV statement import, queued automatic matching against recorded payments |
+| **Bank reconciliation** | CSV statement import, queued automatic matching against recorded payments, and a manual matching screen (Livewire + Alpine) for the rest |
+| **Notifications** | Invoice email to the customer on issue, delivered through a transactional outbox |
 | **Access control** | Roles (admin, accountant, viewer) enforced by policies in the API and the admin panel |
+| **Audit trail** | Every journal entry records who posted it. An append-only activity log covers accounts, customers and manual bank matches |
 | **REST API** | `/api/v1`, Sanctum tokens with read/write abilities, OpenAPI docs |
 | **Admin panel** | Filament resources for all of the above, plus a trial balance page and a dashboard |
 
@@ -64,8 +68,11 @@ The seeder creates a chart of accounts, three customers and four invoices (paid,
 ```bash
 php artisan ledger:trial-balance                          # exits 1 if debits != credits
 php artisan bank:import database/samples/bank-statement.csv
-php artisan queue:work --stop-when-empty                  # runs the reconciliation job
+php artisan queue:work --stop-when-empty                  # runs queued jobs (matching, invoice emails)
+php artisan schedule:work                                 # runs outbox:relay every 5 minutes
 ```
+
+Locally `MAIL_MAILER=log`, so invoice emails are written to `storage/logs/laravel.log`.
 
 ## Environment
 
@@ -91,13 +98,15 @@ php artisan migrate:rollback   # every migration has a working down() (checked i
 | Table | Notes |
 |---|---|
 | `accounts` | `code` unique. Deactivated, never deleted (`journal_lines` restrict delete) |
-| `journal_entries` | `idempotency_key` unique, `reversal_of_id` unique (an entry is reversed at most once), `source` morph (`invoice`) |
+| `journal_entries` | `idempotency_key` unique, `reversal_of_id` unique (an entry is reversed at most once), `source` morph (`invoice`), `posted_by` (null = system) |
 | `journal_lines` | Amounts are `BIGINT UNSIGNED` minor units. The FK to the entry restricts delete |
 | `invoices`, `invoice_lines` | `number` unique. Totals stored in minor units |
 | `payments` | `idempotency_key` unique |
-| `bank_transactions` | `fingerprint` unique (duplicate import protection), `payment_id` unique (a payment matches one bank line) |
+| `bank_transactions` | `fingerprint` unique (duplicate import protection), `payment_id` unique (a payment matches one bank line), `match_method` (`auto`/`manual`), `matched_by` |
+| `activity_log` | Append-only: user, event, subject (morph), old/new values as JSON |
+| `outbox_messages` | `dedupe_key` unique (one message per event), status, attempts, claim, last error |
 | `sequences` | Gap-free counters (invoice numbers), created by a migration |
-| `users` | `role`: `admin`, `accountant` or `viewer` |
+| `users` | `role`: `admin`, `accountant` or `viewer`. Users with postings, matches or log entries can't be deleted (restrict) |
 
 On MySQL, these CHECK constraints back up the service rules, so a raw SQL statement or a bug can't break them either:
 
@@ -126,7 +135,15 @@ The job:
 - **Is unique until processing.** While a run waits in the queue, more imports don't queue more runs. When a run starts, the lock is released, so an import during the run queues the next one. It used to be `ShouldBeUnique`, which kept the lock during the run, so an import at that moment dispatched nothing and its rows waited for the next import. There's a regression test for this.
 - **Limits:** 3 tries, backoff 10 s / 60 s, 120 s timeout. After the last failure it's stored in `failed_jobs` and logged by `failed()`. That log has the exception class and message only, and for SQL errors only the SQLSTATE, because a `QueryException` message contains bank references and amounts.
 
-The job has no external side effects (no API calls or emails), so it needs no outbox. If a webhook or notification were added, it should go through an outbox table written in the same transaction.
+### Invoice email: transactional outbox
+
+Issuing an invoice must not send an email for an invoice that then rolls back, and must not lose the email if the process dies after the commit. A database transaction can't include an SMTP call, so `InvoiceService::issue()` writes an `outbox_messages` row in **the same transaction** as the posting, and `DeliverOutboxMessage` is dispatched **after commit**.
+
+- **Claim, then send.** The job claims the row with one conditional `UPDATE … WHERE status = 'pending' AND (claimed_at IS NULL OR claimed_at < now - 10 min)`. Two workers never deliver one message at the same time, and no lock is held during the SMTP call.
+- **At-least-once.** If a worker dies after sending but before marking the row sent, the claim expires and the message goes out again. Exactly-once would need deduplication on the receiving side, which email can't do. A duplicate invoice email is acceptable; a lost one isn't.
+- **Lost jobs.** `outbox:relay` (scheduled every 5 minutes) re-dispatches messages still pending after 5 minutes. A duplicate dispatch is harmless because of the claim.
+- **Failures.** 5 tries with backoff of 30 s, 2 min, 10 min and 30 min. An error releases the claim and is stored in `last_error`. After the last try the status is `failed`. A customer without an email address is `skipped`, not failed.
+- **Extending it.** Handlers implement `App\Outbox\OutboxHandler` and are registered by message type in `config/ledger.php`.
 
 ## Tests and quality checks
 
@@ -137,7 +154,7 @@ vendor/bin/phpstan analyse                                           # Larastan,
 vendor/bin/pint --test                                               # code style
 ```
 
-Last local run (PHP 8.3.18, MySQL 8.4.3): SQLite 168 passed and 7 skipped (the MySQL-only tests). MySQL 175 of 175 passed. Larastan reports 0 errors and Pint passes.
+Last local run (PHP 8.3.18, MySQL 8.4.3): SQLite 198 passed and 7 skipped (the MySQL-only tests). MySQL 205 of 205 passed. Larastan reports 0 errors and Pint passes.
 
 | Area | What's tested |
 |---|---|
@@ -148,7 +165,10 @@ Last local run (PHP 8.3.18, MySQL 8.4.3): SQLite 168 passed and 7 skipped (the M
 | Payments | Partial / full, exactly the outstanding amount vs one cent more, before the issue date, in the future, paid invoice, rollback when the ledger posting fails, retry after the failure |
 | Reports | Trial balance totals, `as_of` boundaries (the day included, the next excluded), **receivables in the ledger = open invoices** across every invoice state |
 | Reconciliation | Matching, unmatched and outgoing lines, duplicate files and lines, malformed rows (including rolled-over dates and too-long references), job re-runs, the uniqueness regression, failure logging |
-| Authorization | Every write route for every role, token ability limits per role, role downgrade after token issue, mass assignment of the role, admin panel pages and actions (also called directly through Livewire) |
+| Manual matching | The Livewire page (select, candidates by amount, match, errors as notifications), service rules (amount, direction, already matched), API endpoint, `auto`/`manual` recorded, activity log entry |
+| Outbox | Email sent after commit, nothing written or queued on rollback, duplicate delivery sends once, claimed messages left alone and taken over after the TTL, skipped without email, error → retry → failed, relay picks only stale pending messages, scheduling |
+| Audit trail | `posted_by` from API and document postings, null for system postings, old/new values for account changes, no log for no-op updates, admin panel creates, immutability |
+| Authorization | Every write route for every role, token ability limits per role, role downgrade after token issue, mass assignment of the role, admin panel pages and actions (also called directly through Livewire), including the bank import actions |
 | API | Auth, rate limiting, validation, consistent error codes, pagination, filters, N+1 check on the invoice list |
 | MySQL only | CHECK constraints and FK restrict. **Concurrency:** 6 processes paying one invoice at once (no overpayment), 6 retries with one key (one payment), 6 manual entries with one key (one entry), 6 concurrent issues (numbers 1-6, no gaps or duplicates) |
 
@@ -170,7 +190,10 @@ Artisan commands, jobs  ─┘   (who may)     (shape validation)       (busines
 | `Services\InvoiceService` | Draft create/update/delete, totals, issue (number + posting), void (reversal) |
 | `Services\PaymentService` | Records payments: invoice row lock, idempotency, overpayment and date checks, posting, status |
 | `Services\SequenceService` | Gap-free numbers from a locked counter row |
-| `Services\BankStatementImporter`, `BankReconciler`, `Jobs\ReconcileBankTransactions` | Statement import and matching |
+| `Services\BankStatementImporter`, `BankReconciler`, `Jobs\ReconcileBankTransactions` | Statement import, automatic and manual matching |
+| `Outbox\Outbox`, `Jobs\DeliverOutboxMessage`, `Outbox\Handlers\*` | Transactional outbox for side effects outside the database |
+| `Models\ActivityLog`, `Models\Concerns\RecordsActivity` | Append-only audit log for master data and manual decisions |
+| `Filament\Pages\MatchBankLines` | Hand-written Livewire component with an Alpine.js filter for manual matching |
 | `Enums\InvoiceStatus` | The invoice state machine (`canTransitionTo()`) |
 | `Enums\UserRole`, `Policies\*` | Who may do what |
 | `Exceptions\DomainRuleException` | Base class for business-rule errors with a stable code and HTTP status (`LedgerException`, `BillingException`, `MoneyException`) |
@@ -248,7 +271,8 @@ This is a single-organization system: every authenticated user can read all of i
 | Read everything, reports | ✓ | ✓ | ✓ |
 | Customers, invoices, payments, void | | ✓ | ✓ |
 | Manual journal entries, reversals | | ✓ | ✓ |
-| Bank statement import | | ✓ | ✓ |
+| Bank statement import, manual matching | | ✓ | ✓ |
+| Activity log (read) | ✓ | ✓ | ✓ |
 | Chart of accounts (create, edit) | | | ✓ |
 | Edit or delete posted entries | | | |
 
@@ -290,6 +314,7 @@ Send the token as `Authorization: Bearer <token>`. Tokens expire after 30 days a
 | `GET` | `/reports/trial-balance?as_of=YYYY-MM-DD` | read | any |
 | `POST` | `/bank-statements` (multipart CSV, max 2 MB) → `202` | write | accountant, admin |
 | `GET` | `/bank-transactions?reconciled=0\|1` | read | any |
+| `POST` | `/bank-transactions/{id}/match` (`payment_id`) | write | accountant, admin |
 
 Lists are paginated (`per_page` up to 100, default 25) with Laravel's `data` / `links` / `meta` envelope. Money fields are objects: `{"amount": "118.00", "currency": "AZN"}`.
 
@@ -315,10 +340,10 @@ Every error body has a `message` and a stable `code`.
 | `404` | Unknown resource (the model class is not named) | `not_found` |
 | `409` | State conflict (issue twice, edit an issued invoice, idempotency conflict) | e.g. `billing.invalid_transition`, `billing.idempotency_conflict` |
 | `422` | Invalid input (adds `errors: {field: [...]}`) | `validation_failed` |
-| `422` | Business rule | e.g. `ledger.unbalanced`, `ledger.control_account`, `billing.overpayment`, `billing.payment_before_issue`, `money.overflow` |
+| `422` | Business rule | e.g. `ledger.unbalanced`, `ledger.control_account`, `billing.overpayment`, `billing.payment_before_issue`, `banking.amount_mismatch`, `money.overflow` |
 | `429` | Rate limit (with `Retry-After`) | `too_many_requests` |
 
-The business-rule codes are listed in `app/Exceptions/LedgerException.php`, `BillingException.php` and `MoneyException.php`.
+The business-rule codes are listed in `app/Exceptions/LedgerException.php`, `BillingException.php`, `BankingException.php` and `MoneyException.php`.
 
 ## Admin panel
 
@@ -327,7 +352,10 @@ The business-rule codes are listed in `app/Exceptions/LedgerException.php`, `Bil
 - Invoices: create and edit drafts (the totals are calculated by `InvoiceService`), plus Issue, Record payment and Void actions. Each action calls the same service as the API, and business-rule errors are shown as notifications.
 - Journal entries: post manual entries and reverse them. Entries have no edit or delete.
 - Chart of accounts: code and type are locked once the account has postings, which `AccountService` enforces, not only the form.
-- Bank reconciliation list with an unreconciled filter, the trial balance page (with an *as of* date), and a dashboard that reads balances from the ledger.
+- Bank reconciliation list with an unreconciled filter and an auto/manual badge, and the statement import (accountant and admin only).
+- **Match bank lines**: a custom Livewire page. Select an unmatched bank line, and it lists the unmatched payments of exactly that amount. Alpine.js filters them by invoice, customer or reference in the browser, confirms the match, and Esc clears the selection. The match runs `BankReconciler::matchManually()`, and the Livewire action checks the policy again on every call.
+- **Activity log**: read-only, filterable by record type and event. Journal entries show *Posted by*.
+- The trial balance page (with an *as of* date) and a dashboard that reads balances from the ledger.
 
 `Model::shouldBeStrict()` is on outside production, so lazy loading (N+1) and silently discarded attributes throw instead of failing quietly.
 
@@ -352,9 +380,11 @@ Not implemented, on purpose:
 - **One currency.** No exchange rates or revaluation. `Money` refuses to add or compare different currencies.
 - **No refunds, credit notes, bank fees or write-offs.** A paid invoice can't be reversed. Write-offs would need a document type that posts to receivables, since manual entries can't.
 - **No accounting periods or period closing.** Manual entries can be back-dated.
-- **No audit trail of who posted what.** Entries have `posted_at` but no `user_id`. In production I'd add it, plus an activity log for master-data changes.
+- **The audit log covers master data and manual matches, not invoice drafts.** Draft edits aren't logged; issued invoices are covered by their journal entries' `posted_by`.
 - **No user management screen.** Roles are set in the database or the seeder.
-- **No manual matching screen** for unmatched bank lines.
+- **No un-matching.** A wrong manual match can't be undone in the UI yet; it would need an unmatch action that writes its own log entry.
+- **The Alpine.js filter isn't tested in a browser.** The Livewire tests cover the server side (selection, candidates, match, authorization). A Dusk or Playwright test would cover the JavaScript.
 - **SQLite tests skip** the CHECK-constraint and concurrency tests. The MySQL run in CI covers them.
+- **Email is at-least-once.** A worker crash between sending and marking can send an invoice email twice (see [Queue](#queue)).
 
-A production deployment would also need: HTTPS and `APP_DEBUG=false`, a real secrets store, a supervised queue worker with alerts on `failed_jobs`, centralized logs, backups with restore tests, MySQL in strict mode (the default), a timezone policy (the app runs in UTC, `config/app.php`, so "today" for issue and payment dates is the UTC date), and a review of the rate limits.
+A production deployment would also need: HTTPS and `APP_DEBUG=false`, a real secrets store, a supervised queue worker and the scheduler, with alerts on `failed_jobs` and on `outbox_messages` in status `failed`, a real mail provider, centralized logs, backups with restore tests, MySQL in strict mode (the default), a timezone policy (the app runs in UTC, `config/app.php`, so "today" for issue and payment dates is the UTC date), and a review of the rate limits.
