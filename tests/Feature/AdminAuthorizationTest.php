@@ -7,16 +7,19 @@ use App\Enums\InvoiceStatus;
 use App\Enums\UserRole;
 use App\Filament\Resources\Accounts\AccountResource;
 use App\Filament\Resources\Accounts\Pages\EditAccount;
+use App\Filament\Resources\BankTransactions\Pages\ListBankTransactions;
 use App\Filament\Resources\Customers\CustomerResource;
 use App\Filament\Resources\Invoices\InvoiceResource;
 use App\Filament\Resources\Invoices\Pages\ViewInvoice;
 use App\Filament\Resources\JournalEntries\JournalEntryResource;
 use App\Filament\Resources\JournalEntries\Pages\ViewJournalEntry;
+use App\Jobs\ReconcileBankTransactions;
 use App\Models\Invoice;
 use App\Models\User;
 use App\Services\InvoiceService;
 use App\Services\LedgerService;
 use App\Support\Money;
+use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 
 /**
@@ -103,6 +106,36 @@ class AdminAuthorizationTest extends LedgerTestCase
             ->call('callMountedAction');
 
         $this->assertFalse($entry->reversedBy()->exists());
+    }
+
+    /**
+     * Regression: the import and matching actions on the bank page had no
+     * authorization, so a viewer could import statements.
+     */
+    public function test_a_viewer_cannot_import_statements_or_run_matching(): void
+    {
+        Queue::fake();
+        $this->actingAsRole(UserRole::Viewer);
+
+        Livewire::test(ListBankTransactions::class)
+            ->assertActionHidden('import')
+            ->assertActionHidden('reconcile')
+            ->call('mountAction', 'reconcile')
+            ->call('callMountedAction');
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_an_accountant_can_run_matching(): void
+    {
+        Queue::fake();
+        $this->actingAsRole(UserRole::Accountant);
+
+        Livewire::test(ListBankTransactions::class)
+            ->assertActionVisible('import')
+            ->callAction('reconcile');
+
+        Queue::assertPushed(ReconcileBankTransactions::class);
     }
 
     public function test_editing_an_account_goes_through_the_account_service(): void

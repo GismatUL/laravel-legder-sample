@@ -20,9 +20,11 @@ class ListBankTransactions extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
+            // Hidden actions are also refused server-side by Filament.
             Action::make('import')
                 ->label('Import statement')
                 ->icon('heroicon-o-arrow-up-tray')
+                ->visible(fn () => BankTransactionResource::canCreate())
                 ->schema([
                     FileUpload::make('statement')
                         ->helperText('CSV with the columns: date, amount, reference')
@@ -53,6 +55,7 @@ class ListBankTransactions extends ListRecords
                 ->label('Run matching')
                 ->icon('heroicon-o-arrow-path')
                 ->color('gray')
+                ->visible(fn () => BankTransactionResource::canCreate())
                 ->action(function () {
                     ReconcileBankTransactions::dispatch();
 
