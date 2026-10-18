@@ -31,6 +31,11 @@ class JournalEntryResource extends JsonResource
             'total' => $this->whenLoaded('lines', fn () => $this->totalDebits()),
             'lines' => JournalLineResource::collection($this->whenLoaded('lines')),
             'posted_at' => $this->posted_at->toIso8601String(),
+            // null = posted by the system (queued job, seeder, CLI)
+            'posted_by' => $this->whenLoaded('postedBy', fn () => $this->postedBy === null ? null : [
+                'id' => $this->postedBy->id,
+                'name' => $this->postedBy->name,
+            ]),
         ];
     }
 }

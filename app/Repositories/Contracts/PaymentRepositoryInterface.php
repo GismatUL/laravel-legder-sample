@@ -11,6 +11,18 @@ interface PaymentRepositoryInterface
 {
     public function findByIdempotencyKey(string $key): ?Payment;
 
+    public function find(int $id): Payment;
+
+    public function findForUpdate(int $id): Payment;
+
+    /**
+     * Candidates for manual matching: payments of exactly this amount that
+     * no bank line is matched to yet, newest first, with invoice and customer.
+     *
+     * @return Collection<int, Payment>
+     */
+    public function unmatchedWithAmount(Money $amount, int $limit): Collection;
+
     /**
      * Payments on the invoice with this number and exact amount that are
      * not matched to a bank transaction yet, locked for update.

@@ -29,6 +29,11 @@ class BankTransactionsTable
                 TextColumn::make('payment.invoice.number')
                     ->label('Matched invoice')
                     ->placeholder('Unmatched'),
+                TextColumn::make('match_method')
+                    ->label('Matched')
+                    ->badge()
+                    ->color(fn (string $state) => $state === 'manual' ? 'warning' : 'gray')
+                    ->placeholder('-'),
                 TextColumn::make('reconciled_at')
                     ->dateTime()
                     ->placeholder('-'),

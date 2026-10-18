@@ -15,6 +15,28 @@ class EloquentPaymentRepository implements PaymentRepositoryInterface
         return Payment::query()->where('idempotency_key', $key)->first();
     }
 
+    public function find(int $id): Payment
+    {
+        return Payment::query()->findOrFail($id);
+    }
+
+    public function findForUpdate(int $id): Payment
+    {
+        return Payment::query()->with('invoice')->whereKey($id)->lockForUpdate()->firstOrFail();
+    }
+
+    public function unmatchedWithAmount(Money $amount, int $limit): Collection
+    {
+        return Payment::query()
+            ->with('invoice.customer')
+            ->where('amount', $amount->minor)
+            ->whereDoesntHave('bankTransaction')
+            ->orderByDesc('paid_on')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get();
+    }
+
     public function unmatchedForUpdate(string $invoiceNumber, Money $amount): Collection
     {
         return Payment::query()

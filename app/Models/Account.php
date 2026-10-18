@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\AccountType;
+use App\Models\Concerns\RecordsActivity;
 use App\Support\Money;
 use Database\Factories\AccountFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -14,7 +15,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Account extends Model
 {
     /** @use HasFactory<AccountFactory> */
-    use HasFactory;
+    use HasFactory, RecordsActivity;
 
     protected function casts(): array
     {

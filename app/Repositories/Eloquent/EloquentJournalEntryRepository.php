@@ -37,7 +37,7 @@ class EloquentJournalEntryRepository implements JournalEntryRepositoryInterface
 
     public function loadDetails(JournalEntry $entry): JournalEntry
     {
-        return $entry->load(['lines.account', 'reversalOf', 'reversedBy']);
+        return $entry->load(['lines.account', 'reversalOf', 'reversedBy', 'postedBy']);
     }
 
     public function findWithDetails(int $id): JournalEntry
@@ -48,7 +48,7 @@ class EloquentJournalEntryRepository implements JournalEntryRepositoryInterface
     public function paginate(?CarbonInterface $from, ?CarbonInterface $to, ?int $accountId, int $perPage): LengthAwarePaginator
     {
         return JournalEntry::query()
-            ->with('lines.account')
+            ->with(['lines.account', 'postedBy'])
             ->when($from, fn ($query) => $query->where('entry_date', '>=', $from->toDateString()))
             ->when($to, fn ($query) => $query->where('entry_date', '<', $to->copy()->addDay()->toDateString()))
             ->when($accountId, fn ($query) => $query->whereHas('lines', fn ($q) => $q->where('account_id', $accountId)))

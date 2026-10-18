@@ -31,7 +31,7 @@ class AdminPanelProvider extends PanelProvider
             ->colors([
                 'primary' => Color::Emerald,
             ])
-            ->navigationGroups(['Billing', 'Accounting'])
+            ->navigationGroups(['Billing', 'Accounting', 'Audit'])
             // Wrap create/edit pages in a transaction, so an invoice and its lines save together.
             ->databaseTransactions()
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\Filament\Resources')

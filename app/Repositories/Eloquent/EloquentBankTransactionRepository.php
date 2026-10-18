@@ -6,6 +6,7 @@ use App\Models\BankTransaction;
 use App\Repositories\Contracts\BankTransactionRepositoryInterface;
 use Closure;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class EloquentBankTransactionRepository implements BankTransactionRepositoryInterface
@@ -46,10 +47,23 @@ class EloquentBankTransactionRepository implements BankTransactionRepositoryInte
             ->paginate($perPage);
     }
 
-    public function markReconciled(BankTransaction $transaction, int $paymentId): void
+    public function unreconciledIncoming(int $limit): Collection
+    {
+        return BankTransaction::query()
+            ->unreconciled()
+            ->where('amount', '>', 0)
+            ->orderBy('booked_on')
+            ->orderBy('id')
+            ->limit($limit)
+            ->get();
+    }
+
+    public function markReconciled(BankTransaction $transaction, int $paymentId, string $method, ?int $userId = null): void
     {
         $transaction->forceFill([
             'payment_id' => $paymentId,
+            'match_method' => $method,
+            'matched_by' => $userId,
             'reconciled_at' => now(),
         ])->save();
     }

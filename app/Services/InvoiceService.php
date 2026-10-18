@@ -8,6 +8,7 @@ use App\Data\NewJournalEntry;
 use App\Enums\InvoiceStatus;
 use App\Exceptions\BillingException;
 use App\Models\Invoice;
+use App\Outbox\Outbox;
 use App\Repositories\Contracts\CustomerRepositoryInterface;
 use App\Repositories\Contracts\InvoiceRepositoryInterface;
 use App\Support\Money;
@@ -21,6 +22,7 @@ class InvoiceService
         private readonly ChartOfAccounts $chart,
         private readonly InvoiceRepositoryInterface $invoices,
         private readonly CustomerRepositoryInterface $customers,
+        private readonly Outbox $outbox,
     ) {}
 
     public function createDraft(InvoiceData $data): Invoice
@@ -107,7 +109,8 @@ class InvoiceService
     }
 
     /**
-     * Draft -> Issued. Assigns the next invoice number and posts:
+     * Draft -> Issued. Assigns the next invoice number, queues the invoice
+     * email through the outbox, and posts:
      *   Dr Accounts receivable   total
      *   Cr Sales revenue         subtotal
      *   Cr VAT payable           tax
@@ -153,13 +156,19 @@ class InvoiceService
                 source: $invoice,
             ));
 
-            return $this->invoices->update($invoice, [
+            $invoice = $this->invoices->update($invoice, [
                 'number' => $number,
                 'status' => InvoiceStatus::Issued,
                 'issue_date' => today(),
                 'due_date' => $dueDate,
                 'journal_entry_id' => $entry->getKey(),
             ]);
+
+            // Same transaction as the posting: no email for an invoice that
+            // rolled back, and no issued invoice whose email is forgotten.
+            $this->outbox->record('invoice_issued', "invoice_issued:{$invoice->getKey()}", ['invoice_id' => $invoice->getKey()]);
+
+            return $invoice;
         }, attempts: LedgerService::DEADLOCK_ATTEMPTS);
     }
 

@@ -59,6 +59,7 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
             Route::post('journal-entries/{journal_entry}/reversal', ReverseJournalEntryController::class)->name('journal-entries.reversal')->can('reverse', 'journal_entry');
 
             Route::post('bank-statements', [BankStatementController::class, 'store'])->name('bank-statements.store')->can('create', BankTransaction::class);
+            Route::post('bank-transactions/{bank_transaction}/match', [BankTransactionController::class, 'match'])->name('bank-transactions.match')->can('reconcile', 'bank_transaction');
         });
     });
 });

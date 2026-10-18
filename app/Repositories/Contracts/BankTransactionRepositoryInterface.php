@@ -31,5 +31,15 @@ interface BankTransactionRepositoryInterface
      */
     public function paginate(?bool $reconciled, int $perPage): LengthAwarePaginator;
 
-    public function markReconciled(BankTransaction $transaction, int $paymentId): void;
+    /**
+     * Unreconciled incoming lines, oldest first.
+     *
+     * @return Collection<int, BankTransaction>
+     */
+    public function unreconciledIncoming(int $limit): Collection;
+
+    /**
+     * @param  'auto'|'manual'  $method
+     */
+    public function markReconciled(BankTransaction $transaction, int $paymentId, string $method, ?int $userId = null): void;
 }

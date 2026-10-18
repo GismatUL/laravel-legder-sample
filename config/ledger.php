@@ -1,5 +1,7 @@
 <?php
 
+use App\Outbox\Handlers\SendInvoiceIssuedEmail;
+
 return [
 
     // Single-currency ledger. Amounts are stored as integers in minor units of
@@ -18,6 +20,11 @@ return [
     // Accounts (keys above) that manual journal entries can't post to.
     // Receivables must equal the open invoices, so only invoices and payments post there.
     'control_accounts' => ['receivable'],
+
+    // Outbox message type => handler (App\Outbox\OutboxHandler) that delivers it.
+    'outbox_handlers' => [
+        'invoice_issued' => SendInvoiceIssuedEmail::class,
+    ],
 
     'invoice_prefix' => 'INV-',
 

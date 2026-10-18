@@ -136,6 +136,7 @@ class ConcurrencyTest extends TestCase
             'CACHE_STORE' => 'array',
             'QUEUE_CONNECTION' => 'sync',
             'LOG_CHANNEL' => 'null',
+            'MAIL_MAILER' => 'array',
         ];
 
         // Enough time for every process to boot before the shared start.
@@ -177,7 +178,7 @@ class ConcurrencyTest extends TestCase
     {
         Schema::disableForeignKeyConstraints();
 
-        foreach (['bank_transactions', 'payments', 'invoice_lines', 'invoices', 'customers', 'journal_lines', 'journal_entries', 'accounts', 'sequences', 'users', 'personal_access_tokens', 'jobs', 'cache', 'cache_locks'] as $table) {
+        foreach (['bank_transactions', 'payments', 'invoice_lines', 'invoices', 'customers', 'journal_lines', 'journal_entries', 'accounts', 'sequences', 'outbox_messages', 'activity_log', 'users', 'personal_access_tokens', 'jobs', 'cache', 'cache_locks'] as $table) {
             DB::table($table)->truncate();
         }
 
