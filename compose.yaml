@@ -1,0 +1,97 @@
+# Local environment: PHP-FPM, Nginx, MySQL 8.4, Redis, a queue worker and the scheduler.
+# Setup: see "Docker" in README.md.
+
+# Shared by app, queue and scheduler. Only `app` builds the image; the other
+# two run the same image with a different command.
+x-app: &app
+  image: ledger-sample-app
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    APP_ENV: local
+    DB_CONNECTION: mysql
+    DB_HOST: mysql
+    DB_PORT: "3306"
+    DB_DATABASE: ledger
+    DB_USERNAME: ledger
+    DB_PASSWORD: secret
+    REDIS_CLIENT: phpredis
+    REDIS_HOST: redis
+    CACHE_STORE: redis
+    QUEUE_CONNECTION: redis
+    SESSION_DRIVER: redis
+    # One JSON object per line on stderr; `docker compose logs` collects it.
+    LOG_CHANNEL: stderr
+    LOG_STDERR_FORMATTER: Monolog\Formatter\JsonFormatter
+    MAIL_MAILER: smtp
+    MAIL_HOST: mailpit
+    MAIL_PORT: "1025"
+  depends_on:
+    mysql:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  app:
+    <<: *app
+    build:
+      context: .
+      target: app
+      args:
+        # Keeps PHPUnit, Larastan and Pint in the image so the checks run in the container.
+        INSTALL_DEV: "true"
+
+  queue:
+    <<: *app
+    pull_policy: never
+    command: php artisan queue:work redis --sleep=1 --max-time=3600
+
+  scheduler:
+    <<: *app
+    pull_policy: never
+    command: php artisan schedule:work
+
+  web:
+    build:
+      context: .
+      target: web
+    image: ledger-sample-web
+    ports:
+      - "${APP_PORT:-8080}:80"
+    depends_on:
+      - app
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ledger
+      MYSQL_USER: ledger
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Catches outgoing email (invoice notifications); web UI on MAIL_UI_PORT.
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "${MAIL_UI_PORT:-8025}:8025"
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  mysql-data:

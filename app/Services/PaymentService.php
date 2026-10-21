@@ -9,11 +9,13 @@ use App\Enums\PaymentMethod;
 use App\Exceptions\BillingException;
 use App\Models\Invoice;
 use App\Models\Payment;
+use App\Outbox\Outbox;
 use App\Repositories\Contracts\InvoiceRepositoryInterface;
 use App\Repositories\Contracts\PaymentRepositoryInterface;
 use App\Support\Money;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class PaymentService
 {
@@ -22,6 +24,7 @@ class PaymentService
         private readonly ChartOfAccounts $chart,
         private readonly InvoiceRepositoryInterface $invoices,
         private readonly PaymentRepositoryInterface $payments,
+        private readonly Outbox $outbox,
     ) {}
 
     /**
@@ -103,6 +106,17 @@ class PaymentService
                 'amount_paid' => $paid,
                 'status' => $status,
             ]);
+
+            // Committed together with the payment, delivered after commit.
+            $eventId = "payment_recorded:{$payment->getKey()}";
+            $this->outbox->record('payment_recorded', $eventId, ['payment_id' => $payment->getKey(), 'event_id' => $eventId]);
+
+            DB::afterCommit(fn () => Log::info('Payment recorded', [
+                'payment_id' => $payment->getKey(),
+                'invoice_id' => $invoice->getKey(),
+                'amount_minor' => $amount->minor,
+                'invoice_status' => $status->value,
+            ]));
 
             return $payment;
         }, attempts: LedgerService::DEADLOCK_ATTEMPTS);

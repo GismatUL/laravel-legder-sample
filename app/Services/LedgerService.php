@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Data\EntryLine;
 use App\Data\ManualEntryLineData;
 use App\Data\NewJournalEntry;
+use App\Events\LedgerPosted;
 use App\Exceptions\LedgerException;
 use App\Models\JournalEntry;
 use App\Repositories\Contracts\AccountRepositoryInterface;
@@ -132,7 +133,7 @@ class LedgerService
 
     private function write(NewJournalEntry $entry, ?JournalEntry $reversalOf = null): JournalEntry
     {
-        return $this->entries->create([
+        $written = $this->entries->create([
             'entry_date' => $entry->date,
             'description' => $entry->description,
             'idempotency_key' => $entry->idempotencyKey,
@@ -140,6 +141,12 @@ class LedgerService
             'posted_at' => now(),
             'posted_by' => Auth::id(),
         ], $entry->lines, $entry->source);
+
+        // Held until the outermost transaction commits (ShouldDispatchAfterCommit),
+        // and dropped if it rolls back.
+        LedgerPosted::dispatch($written->getKey(), $entry->date->toDateString());
+
+        return $written;
     }
 
     private function validate(NewJournalEntry $entry): void

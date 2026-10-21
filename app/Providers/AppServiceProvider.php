@@ -7,6 +7,7 @@ use App\Models\BankTransaction;
 use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\User;
+use App\Reports\ReportCache;
 use App\Support\OpenApi\MoneyToSchema;
 use Dedoc\Scramble\Scramble;
 use Dedoc\Scramble\Support\Generator\OpenApi;
@@ -21,6 +22,14 @@ use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
+    public function register(): void
+    {
+        $this->app->singleton(ReportCache::class, fn ($app) => new ReportCache(
+            $app['cache']->store(),
+            (int) config('ledger.report_cache_seconds'),
+        ));
+    }
+
     public function boot(): void
     {
         // Outside production: fail on lazy loading (N+1), silently discarded

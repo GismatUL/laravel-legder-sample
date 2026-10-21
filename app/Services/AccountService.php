@@ -5,11 +5,15 @@ namespace App\Services;
 use App\Enums\AccountType;
 use App\Exceptions\LedgerException;
 use App\Models\Account;
+use App\Reports\ReportCache;
 use App\Repositories\Contracts\AccountRepositoryInterface;
 
 class AccountService
 {
-    public function __construct(private readonly AccountRepositoryInterface $accounts) {}
+    public function __construct(
+        private readonly AccountRepositoryInterface $accounts,
+        private readonly ReportCache $reports,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $attributes  code, name, type, is_active
@@ -36,6 +40,11 @@ class AccountService
             throw LedgerException::accountHasPostings($account->code);
         }
 
-        return $this->accounts->update($account, $attributes);
+        $account = $this->accounts->update($account, $attributes);
+
+        // Cached reports show account codes and names.
+        $this->reports->invalidate();
+
+        return $account;
     }
 }

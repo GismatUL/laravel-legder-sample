@@ -2,6 +2,7 @@
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
          bootstrap="vendor/autoload.php"
+         cacheDirectory=".phpunit.cache"
          colors="true"
 >
     <testsuites>
@@ -18,17 +19,33 @@
         </include>
     </source>
     <php>
-        <env name="APP_ENV" value="testing"/>
+        <!-- force="true": the Docker app container sets these for the demo
+             (local env, Redis queue and sessions, SMTP, JSON logs on stderr);
+             the tests must not inherit them. -->
+        <env name="APP_ENV" value="testing" force="true"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
-        <env name="BROADCAST_CONNECTION" value="null"/>
+        <env name="BROADCAST_CONNECTION" value="null" force="true"/>
+        <env name="LOG_CHANNEL" value="null" force="true"/>
+        <env name="MAIL_MAILER" value="array" force="true"/>
+        <env name="QUEUE_CONNECTION" value="sync" force="true"/>
+        <env name="SESSION_DRIVER" value="array" force="true"/>
+        <!-- Laravel reads $_SERVER before $_ENV, and a container's variables are in both. -->
+        <server name="APP_ENV" value="testing"/>
+        <server name="BROADCAST_CONNECTION" value="null"/>
+        <server name="LOG_CHANNEL" value="null"/>
+        <server name="MAIL_MAILER" value="array"/>
+        <server name="QUEUE_CONNECTION" value="sync"/>
+        <server name="SESSION_DRIVER" value="array"/>
+        <!-- Not forced: CI and Docker switch these to MySQL and Redis to run the same suite there. -->
         <env name="CACHE_STORE" value="array"/>
         <env name="DB_CONNECTION" value="sqlite"/>
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="DB_URL" value=""/>
-        <env name="MAIL_MAILER" value="array"/>
-        <env name="QUEUE_CONNECTION" value="sync"/>
-        <env name="SESSION_DRIVER" value="array"/>
+        <!-- A Redis database of its own, flushed before every test (tests/TestCase.php). -->
+        <env name="REDIS_CACHE_DB" value="15"/>
+        <!-- Locks (unique jobs) in the same database, so the flush clears them too; by default they share database 0 with the queue. -->
+        <env name="REDIS_CACHE_LOCK_CONNECTION" value="cache"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>

@@ -9,12 +9,13 @@ It was built with AI assistance (Claude Code).
 ## Contents
 
 - [Features](#features)
-- [Setup](#setup)
+- [Setup](#setup) (local or [Docker](#docker))
 - [Configuration](#configuration)
 - [Database](#database)
 - [Background jobs](#background-jobs)
 - [Tests and checks](#tests-and-checks)
-- [Architecture](#architecture)
+- [Architecture](#architecture) (diagrams and decision records in [`docs/`](docs/architecture.md))
+- [Caching, events and logging](#caching-events-and-logging)
 - [Double-entry example](#double-entry-example)
 - [Invoice lifecycle](#invoice-lifecycle)
 - [Idempotency and concurrency](#idempotency-and-concurrency)
@@ -33,12 +34,15 @@ It was built with AI assistance (Claude Code).
 | Payments | Partial and full payments, overpayment check, idempotent recording with an `Idempotency-Key` header |
 | Bank reconciliation | CSV statement import, a queued job that matches lines to payments, and a page for matching the rest by hand |
 | Invoice email | Sent to the customer when an invoice is issued, through a database outbox and a queued job |
+| Payment webhook | Optional "payment recorded" notification to an external system: signed, idempotent, with timeouts, retries and a circuit breaker |
+| Report cache | The trial balance is cached in Redis and invalidated by a `LedgerPosted` event after each posting commits |
+| Logging | A request id in every log line and in the jobs a request dispatches; JSON logs in Docker |
 | Access control | Three roles (admin, accountant, viewer), checked by policies in the API and the admin panel |
 | Audit trail | Journal entries record who posted them. An activity log records changes to accounts and customers, and manual bank matches |
 
 ## Setup
 
-Tested with PHP 8.3 and MySQL 8.4. The test suite also runs on SQLite.
+Tested with PHP 8.3 and 8.4, MySQL 8.4 and Redis 7. The test suite also runs on SQLite with the array cache.
 
 ```bash
 git clone <repository-url> laravel-ledger-sample && cd laravel-ledger-sample
@@ -70,6 +74,30 @@ php artisan schedule:work                                 # runs outbox:relay ev
 
 With the default `MAIL_MAILER=log`, invoice emails are written to `storage/logs/laravel.log`.
 
+### Docker
+
+PHP 8.4 FPM with OPcache, Nginx, MySQL 8.4, Redis 7, a queue worker, the scheduler and Mailpit (`compose.yaml`, `Dockerfile`).
+
+```bash
+cp .env.example .env
+# set APP_KEY, e.g. with: docker compose run --rm --no-deps app php artisan key:generate --show
+docker compose up -d --build
+docker compose exec app php artisan migrate --seed
+```
+
+- App: `http://127.0.0.1:8080` (`APP_PORT` to change), admin panel at `/admin`
+- Caught email: `http://127.0.0.1:8025` (Mailpit)
+- Logs: `docker compose logs -f app queue` (JSON, one object per line)
+
+The compose file overrides the database, Redis, queue, mail and log settings from `.env`. The image includes the dev dependencies, so the checks run in the container:
+
+```bash
+docker compose exec -e DB_DATABASE=ledger_test app php artisan test   # MySQL + Redis
+docker compose exec app vendor/bin/phpstan analyse --memory-limit=1G
+```
+
+`tests/TestCase.php` refuses to run the suite against a MySQL database whose name doesn't end in `_test`, so the demo data can't be wiped by mistake.
+
 ## Configuration
 
 `.env.example` has every setting and no secrets. The application-specific ones:
@@ -78,7 +106,13 @@ With the default `MAIL_MAILER=log`, invoice emails are written to `storage/logs/
 |---|---|---|
 | `LEDGER_CURRENCY` | `AZN` | ISO 4217 code of the ledger's only currency. It sets the number of decimals (2 for AZN, 0 for JPY, 3 for KWD). Don't change it after amounts are stored: they would be read with the wrong number of decimals. |
 | `LEDGER_API_TOKEN_DAYS` | `30` | API token lifetime |
-| `QUEUE_CONNECTION` | `database` | Queue for the matching job and the invoice emails |
+| `QUEUE_CONNECTION` | `database` | Queue for the matching job, the invoice emails and the webhook (`redis` in Docker) |
+| `CACHE_STORE` | `database` | Report cache, rate limits, circuit breaker state (`redis` in Docker) |
+| `LEDGER_REPORT_CACHE_SECONDS` | `600` | TTL of cached reports. They're invalidated on every posting anyway |
+| `LEDGER_WEBHOOK_URL` | empty | Receiver of the "payment recorded" webhook. Empty: messages are marked `skipped` |
+| `LEDGER_WEBHOOK_SECRET` | empty | HMAC key for the `X-Signature` header |
+| `LEDGER_WEBHOOK_TIMEOUT` | `5` | Seconds per request (connect timeout: 2) |
+| `LEDGER_WEBHOOK_CIRCUIT_THRESHOLD`, `_COOL_DOWN` | `5`, `60` | Failures in a row that open the circuit, and seconds it stays open |
 
 Account codes, control accounts, the invoice prefix, payment terms and outbox handlers are in `config/ledger.php`. The app runs in UTC (`config/app.php`), so "today" for issue and payment dates is the UTC date.
 
@@ -129,19 +163,30 @@ php artisan queue:retry all
 - **Retries:** 5 tries with increasing backoff; after the last one the status is `failed`. A customer without an email address is marked `skipped`.
 - **Relay:** `outbox:relay`, scheduled every 5 minutes, re-dispatches messages still pending after 5 minutes, for example if the process died between commit and dispatch.
 
+**`NotifyPaymentWebhook`** is the outbox handler for `payment_recorded`, written in the same transaction as each payment.
+
+- **Request:** JSON with the payment, an `Idempotency-Key` (the outbox dedupe key) and `X-Signature: sha256=<HMAC>`.
+- **Failures:** 2 s connect and 5 s total timeouts; 3 attempts for connection errors, 5xx and 429 (not for other 4xx); then the outbox job's retries.
+- **Circuit breaker:** after 5 failures in a row, deliveries fail immediately for 60 s instead of waiting on a receiver that's down ([ADR 0007](docs/adr/0007-outbound-webhook-resilience.md)).
+
+What to do when deliveries fail: [docs/operations.md](docs/operations.md).
+
 ## Tests and checks
 
 ```bash
-php artisan test                                                     # SQLite in memory
+php artisan test                                                     # SQLite in memory, array cache
 DB_CONNECTION=mysql DB_DATABASE=ledger_sample_test php artisan test  # MySQL, including the MySQL-only tests
+CACHE_STORE=redis REDIS_CLIENT=predis php artisan test               # Redis cache (predis: no PHP extension needed)
 vendor/bin/phpstan analyse                                           # Larastan, level 7
 vendor/bin/pint --test
 ```
 
-Last local run (2026-10-19, PHP 8.3.18, MySQL 8.4.3):
+The Redis run matters: Redis serializes cached values and keeps data between tests, and the array store does neither. It found a bug the other runs missed (cached objects coming back as `__PHP_Incomplete_Class`, see [ADR 0006](docs/adr/0006-report-cache-invalidation.md)). Tests use Redis database 15, flushed before each test.
 
-- SQLite: 198 passed, 7 skipped (the MySQL-only tests)
-- MySQL: 205 of 205 passed
+Last local run (2026-10-20):
+
+- SQLite, PHP 8.4.5: 216 passed, 7 skipped (the MySQL-only tests), with the array cache and again with Redis (predis)
+- Docker (PHP 8.4, MySQL 8.4, Redis 7 with phpredis): 223 of 223 passed
 - Larastan: 0 errors
 - Pint: passed
 
@@ -155,6 +200,10 @@ Last local run (2026-10-19, PHP 8.3.18, MySQL 8.4.3):
 | Reports | Trial balance totals and date boundaries; ledger receivables equal open invoices across all invoice states |
 | Bank | Matching, duplicate imports, malformed rows (including impossible dates and long references), job re-runs, the uniqueness bug, manual matching rules |
 | Outbox | Sent after commit, nothing on rollback, sent once when delivered twice, claim expiry, skipped and failed states, relay |
+| Webhook | Signature and idempotency key, skipped without a URL, 503 retried three times, 422 not retried, circuit opens and stops requests |
+| Circuit breaker | Opens at the threshold, fails fast without calling, half-open probe success and failure, success resets the count |
+| Report cache | Second read runs no query, a posting invalidates every cached date, a rolled-back posting keeps the cache, account rename invalidates, a serializing store with no allowed classes |
+| Request id | Generated on every response including errors, valid incoming id kept and put in the log context, invalid id replaced |
 | Audit | `posted_by` for API and system postings, old/new values, no entry for no-op updates |
 | Authorization | Every write route with every role, token abilities per role, role downgrade after token issue, admin panel actions called directly through Livewire |
 | MySQL only | CHECK constraints, and four concurrency tests run as 6 parallel PHP processes: payments on one invoice, retries with one key, manual entries with one key, concurrent invoice issues |
@@ -168,8 +217,23 @@ There are no browser tests. The Alpine.js code on the matching page isn't tested
 ```
 API controllers  ─┐
 Filament pages   ─┼─►  Policies  ─►  Form Requests / DTOs  ─►  Services  ─►  Repositories  ─►  Eloquent
-Commands, jobs   ─┘
+Commands, jobs   ─┘                                              │
+                                                                 ├─ same transaction ─► outbox ─► queued delivery
+                                                                 └─ after commit ─────► LedgerPosted ─► listeners
 ```
+
+A modular monolith: one application and one database, with three modules (Ledger ← Billing ← Banking). Component, sequence and data-model diagrams are in [docs/architecture.md](docs/architecture.md), and the main decisions with their trade-offs in [docs/adr](docs/adr/README.md):
+
+| ADR | Decision |
+|---|---|
+| [0001](docs/adr/0001-money-as-integer-minor-units.md) | Money as integer minor units |
+| [0002](docs/adr/0002-append-only-ledger.md) | Append-only ledger, corrections by reversal |
+| [0003](docs/adr/0003-modular-monolith.md) | Modular monolith instead of microservices |
+| [0004](docs/adr/0004-locking-and-idempotency.md) | Row locks and idempotency keys |
+| [0005](docs/adr/0005-transactional-outbox.md) | Transactional outbox |
+| [0006](docs/adr/0006-report-cache-invalidation.md) | Report cache with version-based invalidation |
+| [0007](docs/adr/0007-outbound-webhook-resilience.md) | Timeouts, retries, circuit breaker |
+| [0008](docs/adr/0008-request-correlation-and-json-logs.md) | Request ids and JSON logs |
 
 | Class | Responsibility |
 |---|---|
@@ -179,7 +243,10 @@ Commands, jobs   ─┘
 | `Services\PaymentService` | Payments: invoice row lock, idempotency, amount and date checks, posting, status |
 | `Services\SequenceService` | Gap-free numbers from a locked counter row |
 | `Services\BankStatementImporter`, `Services\BankReconciler` | Statement import, automatic and manual matching |
-| `Outbox\Outbox`, `Jobs\DeliverOutboxMessage` | The outbox for the invoice email |
+| `Outbox\Outbox`, `Jobs\DeliverOutboxMessage` | The outbox for the invoice email and the payment webhook |
+| `Outbox\Handlers\NotifyPaymentWebhook`, `Support\CircuitBreaker` | The webhook call and its failure handling |
+| `Events\LedgerPosted`, `Listeners\InvalidateReportCache`, `Reports\ReportCache` | Report caching and its invalidation |
+| `Http\Middleware\AssignRequestId` | Request id for logs and queued jobs |
 | `Models\ActivityLog`, `Models\Concerns\RecordsActivity` | The activity log |
 | `Enums\InvoiceStatus` | Allowed invoice transitions (`canTransitionTo()`) |
 | `Enums\UserRole`, `Policies\*` | Roles and permissions |
@@ -193,6 +260,18 @@ How the code is organized:
 - **Corrections:** posted journal entries can't be updated or deleted. The model, the policy and a database foreign key all refuse it. Corrections are reversing entries linked to the original.
 - **Receivables:** manual journal entries can't post to the receivables account (`ledger.control_account`). Only invoices and payments post there, which keeps the receivables balance equal to the open invoices. A test checks this across every invoice state.
 - **Repositories:** many repository methods are thin wrappers around Eloquent queries. They hold the locking reads and aggregates, but they add little elsewhere.
+
+## Caching, events and logging
+
+**Report cache.** `ReportService::trialBalance()` caches the aggregated totals per `as_of` date. Every key contains a version number, and the `LedgerPosted` listener increments it, which clears all dates at once, because a back-dated entry changes past dates too. The event implements `ShouldDispatchAfterCommit`, so a rolled-back posting doesn't touch the cache. The listener is synchronous on purpose: the next read after a posting must see it. Details: [ADR 0006](docs/adr/0006-report-cache-invalidation.md).
+
+**Logging.** `AssignRequestId` keeps a valid `X-Request-Id` or creates a UUID, returns it in the response and adds it to Laravel's `Context`. Context is written into every log record and carried into queued jobs, so a webhook failure in the worker has the same id as the API call that caused it:
+
+```json
+{"message":"Payment recorded","context":{"payment_id":3,"invoice_id":2,"amount_minor":1000,"invoice_status":"partially_paid"},"level_name":"INFO","extra":{"request_id":"demo-req-67890"}}
+```
+
+Logs hold ids and amounts, not customer data. Runbook: [docs/operations.md](docs/operations.md).
 
 ## Double-entry example
 
@@ -352,16 +431,24 @@ All business-rule codes are in `app/Exceptions/*Exception.php`.
 
 ## CI
 
-`.github/workflows/tests.yml` runs on every push and pull request:
+`.github/workflows/tests.yml` runs on every push and pull request.
+
+**`tests` job**, on PHP 8.3 and 8.4:
 
 1. `composer validate` and `composer install`
 2. Pint
 3. Larastan level 7
-4. PHPUnit on SQLite
+4. PHPUnit on SQLite with the array cache
 5. On a MySQL 8.4 service: `migrate:fresh --seed`, `ledger:trial-balance` and `migrate:rollback`
-6. PHPUnit on MySQL
+6. PHPUnit on MySQL with the Redis cache
 
-The workflow hasn't run on GitHub yet; all of the steps above have been run locally.
+**`docker` job:**
+
+1. Builds the images
+2. Runs the suite in the app container against the compose MySQL and Redis
+3. Starts the stack and checks `/up`
+
+Status: the steps of both jobs were run locally (the Docker steps with Docker 28). The GitHub run of this version hasn't been checked yet.
 
 ## Limitations
 
@@ -374,7 +461,9 @@ The workflow hasn't run on GitHub yet; all of the steps above have been run loca
 - **No user management screen:** roles are set in the database or by the seeder.
 - **No way to undo a manual bank match.**
 - **The activity log doesn't cover invoice drafts:** issued invoices are traceable through their journal entries' `posted_by`.
-- **Invoice emails can be sent twice** if a worker crashes between sending and marking the message sent.
+- **Invoice emails can be sent twice** if a worker crashes between sending and marking the message sent. Webhooks can too, but they carry an `Idempotency-Key` for the receiver to deduplicate.
+- **No metrics or tracing:** logs are structured and correlated by request id, but there's no Prometheus/Grafana, Sentry or OpenTelemetry setup.
+- **The Docker setup is for local use:** dev dependencies are in the image and the passwords in `compose.yaml` are placeholders.
 
 **A real deployment would also need:**
 
@@ -382,6 +471,6 @@ The workflow hasn't run on GitHub yet; all of the steps above have been run loca
 - HTTPS and a secrets store
 - a supervised queue worker and scheduler, with alerts on `failed_jobs` and on failed outbox messages
 - a real mail provider
-- central logging
+- a log collector for the JSON logs, and alerting
 - tested backups
 - a review of the rate limits
